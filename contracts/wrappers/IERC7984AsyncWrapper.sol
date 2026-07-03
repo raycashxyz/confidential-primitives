@@ -48,7 +48,7 @@ interface IERC7984AsyncWrapper {
         address indexed recipient,
         bytes32 amount,
         bytes32 recipientBalance,
-        uint256[] depositIndices
+        uint256[] ids
     );
 
     // -----------------------------------------------------------------------
@@ -60,8 +60,8 @@ interface IERC7984AsyncWrapper {
     error ExternalWrapNotSupported();
     error InvalidMinDecoys();
     error TooFewDecoys();
-    error InvalidDepositIndex();
-    error DuplicateDepositIndex();
+    error InvalidId();
+    error DuplicateId();
 
     // -----------------------------------------------------------------------
     // View functions
@@ -76,7 +76,10 @@ interface IERC7984AsyncWrapper {
     // Abstract lifecycle — children MUST implement
     // -----------------------------------------------------------------------
 
-    function finalizeWrap(uint256[] calldata depositIndices, address recipient) external;
+    /// @notice Finalize pending deposits, minting their homomorphic sum to `recipient`.
+    /// @param ids Finalization units — implementation-defined: deposit indices (flat wrapper) or
+    ///        batch ids (batched wrapper). MUST be strictly increasing (no duplicates).
+    function finalizeWrap(uint256[] calldata ids, address recipient) external;
 
     /// @notice Initiate unwrap (burn confidential tokens). The unwrap handle is available
     ///         from OZ's `UnwrapRequested(receiver, amount)` event — it is NOT returned.

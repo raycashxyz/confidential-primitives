@@ -135,26 +135,26 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
     /**
      * @dev Finalize wrap: homomorphic sum of matching deposits is minted to recipient.
      *      Permissionless — anyone can finalize on behalf of any recipient without leaking information.
-     * @param depositIndices Indices of deposits (MUST be strictly increasing, no duplicates).
+     * @param ids Indices of deposits (MUST be strictly increasing, no duplicates).
      * @param recipient Address to check deposit ownership and mint to.
      * @param minDecoysRequired Minimum number of deposit indices required for privacy.
      */
     function _finalizeWrap(
-        uint256[] calldata depositIndices,
+        uint256[] calldata ids,
         address recipient,
         uint256 minDecoysRequired
     ) internal {
-        if (depositIndices.length < minDecoysRequired) revert TooFewDecoys();
+        if (ids.length < minDecoysRequired) revert TooFewDecoys();
         if (recipient == address(0)) revert ZeroAddress();
 
         eaddress encryptedRecipient = FHE.asEaddress(recipient);
         euint64 sum = E_ZERO;
 
         uint256 prevIndex;
-        for (uint256 k = 0; k < depositIndices.length; k++) {
-            uint256 i = depositIndices[k];
-            if (i >= deposits.length) revert InvalidDepositIndex();
-            if (k > 0 && i <= prevIndex) revert DuplicateDepositIndex();
+        for (uint256 k = 0; k < ids.length; k++) {
+            uint256 i = ids[k];
+            if (i >= deposits.length) revert InvalidId();
+            if (k > 0 && i <= prevIndex) revert DuplicateId();
             prevIndex = i;
             Deposit storage d = deposits[i];
 
@@ -170,7 +170,7 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
             recipient,
             FHE.toBytes32(sum),
             FHE.toBytes32(confidentialBalanceOf(recipient)),
-            depositIndices
+            ids
         );
 
         _mint(recipient, sum);
@@ -189,7 +189,7 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
     // -----------------------------------------------------------------------
 
     /// @notice Finalize wrap — child adds authorization, passes minDecoys to _finalizeWrap.
-    function finalizeWrap(uint256[] calldata depositIndices, address recipient) external virtual;
+    function finalizeWrap(uint256[] calldata ids, address recipient) external virtual;
 
     /// @notice Step 1 of unwrap (encrypted amount) — child calls _unwrap(msg.sender, dest, amount).
     function initUnwrap(

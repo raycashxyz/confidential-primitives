@@ -26,9 +26,9 @@ import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ER
  *         bitmap), not N.
  *
  *         Deposits land in fixed-size batches of `maxBatchDeposits`. finalizeWrap
- *         takes a `batchId` and scans the entire batch, so the decoy set is the
- *         whole batch — no caller-supplied indices or decoys. The depositor learns
- *         their batch from the `WrapInitiated` event.
+ *         takes strictly-increasing batch ids and scans each entire batch, so the
+ *         decoy set is the whole batch — no caller-supplied indices or decoys. The
+ *         depositor learns their batch from the `WrapInitiated` event.
  *
  *         Bitmap is a euint64, so `maxBatchDeposits` is capped at 64: bit
  *         `1 << j` must fit, otherwise slots >= 64 would never be marked consumed
@@ -70,13 +70,14 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
         uint256 amount,
         bytes32 eRecipient
     );
-    event WrapFinalized(uint256 indexed batchId, address indexed recipient, bytes32 amount);
+    event WrapFinalized(address indexed recipient, bytes32 amount, uint256[] ids);
 
     error ZeroAmount();
     error ZeroAddress();
     error InvalidBatchSize();
     error BatchNotStarted();
     error BatchNotComplete();
+    error DuplicateId();
     error ExternalWrapNotSupported();
 
     constructor(
@@ -175,12 +176,12 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Mint the sum of every not-yet-finalized deposit in `batchId` whose
-     *         encrypted recipient equals `recipient`, and mark those slots consumed
-     *         in the batch bitmap. Permissionless and replay-safe: a second call
-     *         for the same recipient pays nothing (their bits are already set).
+     * @notice Per-slot finalize — reference implementation kept for the gas benchmark.
+     *         Prefer {finalizeWrap}, which produces the same result with the bitwise work bulked.
+     *         Mints the sum of every not-yet-finalized deposit in `batchId` matching `recipient`
+     *         and marks those slots consumed. Permissionless and replay-safe.
      */
-    function finalizeWrap(uint256 batchId, address recipient) external {
+    function finalizeWrapPerSlot(uint256 batchId, address recipient) external {
         if (recipient == address(0)) revert ZeroAddress();
         uint256 startIndex = _batchStartIndex(batchId);
         if (startIndex >= totalDeposits) revert BatchNotStarted();
@@ -216,34 +217,55 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
         FHE.allowThis(bitmap);
         batchFinalized[batchId] = bitmap;
 
-        emit WrapFinalized(batchId, recipient, FHE.toBytes32(sum));
+        uint256[] memory singleId = new uint256[](1);
+        singleId[0] = batchId;
+        emit WrapFinalized(recipient, FHE.toBytes32(sum), singleId);
 
         _mint(recipient, sum);
     }
 
     // -----------------------------------------------------------------------
-    // finalizeWrapBatched: same bitmap, but the bitwise nullifier work is
-    // hoisted out of the per-slot loop into a single bulk update.
+    // finalizeWrap: bulk bitwise nullifier, over one or more complete batches.
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Same result as {finalizeWrap}, optimized for EVM gas (at the cost of
-     *         higher FHE HCU, which we don't pay on-chain). Per slot we only do the
-     *         irreducible work: `eq` (match) + `select`/`add` (sum) + assemble a packed
-     *         `matchMask`. The nullifier read/check/update — the bitwise ops — happen
-     *         ONCE in bulk on the 64-bit word, not per slot. This also collapses the
-     *         per-slot `SSTORE` + `allowThis` of the rewrite method into a single pair.
+     * @notice Finalize the given complete batches for `recipient`, minting the homomorphic sum
+     *         of their not-yet-claimed matching deposits in a single mint.
      *
-     *         Replay-safe via a bulk gate (`freshMask != 0`), which is all-or-nothing:
-     *         it relies on the batch being COMPLETE so a recipient's matched set is fixed
-     *         (no partial top-ups). Hence the BatchNotComplete guard.
+     *         The bitwise nullifier work is hoisted out of the per-slot loop into ONE bulk update
+     *         per batch — cheaper EVM gas than the rewrite strategy (the extra cost is FHE HCU,
+     *         not paid on-chain). See {finalizeWrapPerSlot} for the naive per-slot reference.
+     *
+     *         Replay-safe across calls via each batch's bitmap; within a call the bulk gate is
+     *         all-or-nothing, so each id MUST be a COMPLETE batch (no later top-ups). A single
+     *         batch is just a length-1 array — matching the {IERC7984AsyncWrapper} signature.
+     * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
+     * @param recipient Address to match deposits against and mint the total to.
      */
-    function finalizeWrapBatched(uint256 batchId, address recipient) external {
+    function finalizeWrap(uint256[] calldata ids, address recipient) external {
         if (recipient == address(0)) revert ZeroAddress();
+
+        euint64 total = E_ZERO;
+        uint256 prev;
+        for (uint256 k = 0; k < ids.length; k++) {
+            uint256 batchId = ids[k];
+            if (k > 0 && batchId <= prev) revert DuplicateId(); // strictly increasing, no dupes
+            prev = batchId;
+            total = FHE.add(total, _finalizeBatchBulk(batchId, recipient));
+        }
+
+        emit WrapFinalized(recipient, FHE.toBytes32(total), ids);
+        _mint(recipient, total);
+    }
+
+    /**
+     * @dev Bulk-finalize ONE complete batch for `recipient`: scan its slots, mark matched slots
+     *      consumed in the batch bitmap (a single bulk write), and return the fresh payout.
+     *      Reverts {BatchNotComplete} if the batch is not fully filled.
+     */
+    function _finalizeBatchBulk(uint256 batchId, address recipient) private returns (euint64) {
         uint256 startIndex = _batchStartIndex(batchId);
         uint256 endIndex = startIndex + maxBatchDeposits;
-        // Full batch only: the bulk replay gate is all-or-nothing, so a recipient's
-        // matched set must be frozen before finalize (no later top-ups into this batch).
         if (totalDeposits < endIndex) revert BatchNotComplete();
 
         euint64 committed = batchFinalized[batchId];
@@ -268,9 +290,6 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
 
         FHE.allowThis(bitmap);
         batchFinalized[batchId] = bitmap;
-
-        emit WrapFinalized(batchId, recipient, FHE.toBytes32(payout));
-
-        _mint(recipient, payout);
+        return payout;
     }
 }

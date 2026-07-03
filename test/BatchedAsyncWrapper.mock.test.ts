@@ -126,7 +126,7 @@ describe("BatchedAsyncWrapper", () => {
       for (let i = 0; i < 4; i++) await initWrap(wrapper, alice, alice.account.address);
 
       expect(await decryptBalance(wrapper, alice)).toBe(0n); // before
-      await send(wrapper.write.finalizeWrapBatched([0n, alice.account.address], fheTxOpts(alice.account)));
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
       expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 4n); // after
     });
 
@@ -139,11 +139,11 @@ describe("BatchedAsyncWrapper", () => {
       await fundAndApprove(wrapper, alice, 2n);
       for (let i = 0; i < 2; i++) await initWrap(wrapper, alice, alice.account.address);
 
-      await send(wrapper.write.finalizeWrapBatched([0n, alice.account.address], fheTxOpts(alice.account)));
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
       const afterFirst = await decryptBalance(wrapper, alice);
       expect(afterFirst).toBe(AMOUNT * 2n);
 
-      await send(wrapper.write.finalizeWrapBatched([0n, alice.account.address], fheTxOpts(alice.account)));
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
       expect(await decryptBalance(wrapper, alice)).toBe(afterFirst); // no double mint
     });
 
@@ -158,7 +158,7 @@ describe("BatchedAsyncWrapper", () => {
 
       // No explicit gas → viem simulates and surfaces the custom error.
       await assertRevertsWith(
-        wrapper.write.finalizeWrapBatched([0n, alice.account.address], txOpts(alice.account)),
+        wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
         "BatchNotComplete",
       );
     });
@@ -178,8 +178,8 @@ describe("BatchedAsyncWrapper", () => {
         for (let i = 0; i < 4; i++) await initWrap(w, alice, alice.account.address);
       }
 
-      await send(perSlot.write.finalizeWrap([0n, alice.account.address], fheTxOpts(alice.account)));
-      await send(batched.write.finalizeWrapBatched([0n, alice.account.address], fheTxOpts(alice.account)));
+      await send(perSlot.write.finalizeWrapPerSlot([0n, alice.account.address], fheTxOpts(alice.account)));
+      await send(batched.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
 
       const viaPerSlot = await decryptBalance(perSlot, alice);
       const viaBatched = await decryptBalance(batched, alice);

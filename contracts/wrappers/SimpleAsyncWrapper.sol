@@ -63,10 +63,10 @@ contract SimpleAsyncWrapper is ERC7984AsyncWrapper {
     // -----------------------------------------------------------------------
 
     function finalizeWrap(
-        uint256[] calldata depositIndices,
+        uint256[] calldata ids,
         address recipient
     ) external override {
-        _finalizeWrap(depositIndices, recipient, minDecoys);
+        _finalizeWrap(ids, recipient, minDecoys);
     }
 
     function initUnwrap(

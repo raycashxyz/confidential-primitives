@@ -12,20 +12,20 @@ Convert a cleartext ERC-20 into a confidential ERC-7984 token through a two-phas
 
 - **`ERC7984AsyncWrapper`** — abstract base: deposit recording, homomorphic decoy matching, and OpenZeppelin's async unwrap lifecycle.
 - **`SimpleAsyncWrapper`** — minimal concrete wrapper; deposits are pulled via a direct `transferFrom`. Finalizes with the *rewrite* strategy (zero each matched deposit's encrypted amount).
-- **`BatchedAsyncWrapper`** — deposits land in fixed-size batches tracked by a single **confidential bitmap** nullifier. `finalizeWrapBatched` hoists the per-slot bitwise + ACL work into one bulk pass.
+- **`BatchedAsyncWrapper`** — deposits land in fixed-size batches tracked by a single **confidential bitmap** nullifier. Its `finalizeWrap(uint256[] ids, …)` takes *batch ids* (a length-1 array = one batch), matching the shared `IERC7984AsyncWrapper` signature, and hoists the per-slot bitwise + ACL work into one bulk pass per batch. (`finalizeWrapPerSlot` is kept as the naive per-slot reference for the benchmark.)
 
 ## Why the batched-bitmap finalize
 
-Naively, a bitmap (one storage word for the whole batch) should be cheaper than rewriting each deposit. In an FHE contract it isn't — per-op FHE cost dwarfs an `SSTORE`. But once the bitwise nullifier work is **hoisted out of the per-slot loop** and the per-slot `SSTORE` + `FHE.allowThis` are collapsed into a single bulk write, it wins — and the margin grows with batch size.
+Naively, a bitmap (one storage word for the whole batch) should be cheaper than rewriting each deposit. In an FHE contract it isn't — per-op FHE cost dwarfs an `SSTORE`. But once the bitwise nullifier work is **hoisted out of the per-slot loop** and the per-slot `SSTORE` + `FHE.allowThis` are collapsed into a single bulk write, it draws even at small batches and pulls increasingly ahead as the batch grows (≈24% cheaper at N=28).
 
 `finalizeWrap` gas (FHEVM mock = pure EVM gas), N deposits for one recipient:
 
 | batch N | rewrite | bitmap (per-slot) | **bitmap (batched)** | Δ vs rewrite |
 | ---: | ---: | ---: | ---: | ---: |
-| 4  | 628,093   | 708,589   | **619,037**   | −1.4%  |
-| 8  | 972,509   | 1,098,496 | **875,845**   | −9.9%  |
-| 16 | 1,661,352 | 1,878,324 | **1,389,465** | −16.4% |
-| 28 | 2,694,628 | 3,048,095 | **2,159,907** | −19.8% |
+| 4  | 628,093   | 709,314   | **632,008**   | +0.6%  |
+| 8  | 972,509   | 1,099,222 | **888,816**   | −8.6%  |
+| 16 | 1,661,352 | 1,879,050 | **1,402,437** | −15.6% |
+| 28 | 2,694,628 | 3,048,822 | **2,044,350** | −24.1% |
 
 > Reproduce with `pnpm test` (see the finalize gas benchmark). Numbers are from the FHEVM mock, i.e. on-chain EVM gas; absolute values shift on a live FHEVM network but the ranking holds.
 

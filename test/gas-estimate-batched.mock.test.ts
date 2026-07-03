@@ -114,10 +114,10 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched)", () => 
       };
 
       const perSlot = await fillBatched("BatchedPerSlot", "bwPS");
-      const bitmapPerSlot = await finalizeGas(perSlot.write.finalizeWrap([0n, alice.account.address], fheTxOpts(alice.account)));
+      const bitmapPerSlot = await finalizeGas(perSlot.write.finalizeWrapPerSlot([0n, alice.account.address], fheTxOpts(alice.account)));
 
       const bulk = await fillBatched("BatchedBulk", "bwBK");
-      const bitmapBatched = await finalizeGas(bulk.write.finalizeWrapBatched([0n, alice.account.address], fheTxOpts(alice.account)));
+      const bitmapBatched = await finalizeGas(bulk.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
 
       results.push({
         n,
