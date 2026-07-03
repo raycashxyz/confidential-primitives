@@ -1,0 +1,14 @@
+node_modules/
+artifacts/
+cache/
+coverage/
+typechain-types/
+
+# deployoor-generated typed deployers
+src/deployers/
+
+# env / misc
+.env
+.env.*
+*.log
+.DS_Store

@@ -1,0 +1,60 @@
+{
+  "name": "@raycashxyz/confidential-primitives",
+  "version": "0.1.0",
+  "description": "Reusable confidential (FHE) smart-contract primitives for the Zama FHEVM stack — async ERC-7984 token wrappers with a gas-optimized batched-bitmap finalize.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raycashxyz/confidential-primitives.git"
+  },
+  "keywords": [
+    "fhevm",
+    "fhe",
+    "zama",
+    "erc7984",
+    "confidential",
+    "ethereum",
+    "solidity"
+  ],
+  "files": [
+    "contracts/**/*.sol",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "hardhat clean"
+  },
+  "dependencies": {
+    "@fhevm/solidity": "^0.10.0",
+    "@openzeppelin/confidential-contracts": "0.3.1",
+    "@openzeppelin/contracts": "^5.4.0"
+  },
+  "devDependencies": {
+    "@deployoor/hardhat": "^0.1.1",
+    "@deployoor/testing": "^0.2.2",
+    "@fhevm/mock-utils": "^0.4.0",
+    "@nomicfoundation/hardhat-chai-matchers": "^2.1.0",
+    "@nomicfoundation/hardhat-ethers": "^3.1.0",
+    "@nomicfoundation/hardhat-network-helpers": "^1.1.0",
+    "@types/node": "^22.18.11",
+    "chai": "^4.5.0",
+    "deployoor": "^0.3.0",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.15.0",
+    "fhevm-tevm-mocks": "^0.2.0",
+    "hardhat": "^2.26.0",
+    "tevm": "1.0.0-next.149",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.2",
+    "viem": "^2.54.2",
+    "vitest": "^4.1.0",
+    "zod": "^4.4.3"
+  }
+}
