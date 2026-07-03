@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {euint64, externalEuint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
+import {externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 
 /**
  * @title IERC7984AsyncWrapper
@@ -21,35 +21,9 @@ import {euint64, externalEuint64, eaddress, externalEaddress} from "@fhevm/solid
  */
 interface IERC7984AsyncWrapper {
 
-    // -----------------------------------------------------------------------
-    // Structs
-    // -----------------------------------------------------------------------
-
-    struct Deposit {
-        address depositor;
-        uint256 originalAmount;
-        euint64 amount;
-        eaddress recipient;
-        bytes data;
-    }
-
-    // -----------------------------------------------------------------------
-    // Events
-    // -----------------------------------------------------------------------
-
-    event WrapInitiated(
-        uint256 indexed depositIndex,
-        address indexed depositor,
-        uint256 amount,
-        bytes32 encryptedRecipientHandle,
-        bytes data
-    );
-    event WrapFinalized(
-        address indexed recipient,
-        bytes32 amount,
-        bytes32 recipientBalance,
-        uint256[] ids
-    );
+    // Deposit struct and WrapInitiated/WrapFinalized events are implementation-specific
+    // (the flat wrapper and the batched wrapper store and emit different shapes), so they are
+    // defined in the implementations, not here — keeping this a pure functions+errors interface.
 
     // -----------------------------------------------------------------------
     // Errors

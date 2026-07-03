@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, euint64, externalEuint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
 import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ERC7984/extensions/ERC7984ERC20Wrapper.sol";
+import {IERC7984AsyncWrapper} from "./IERC7984AsyncWrapper.sol";
 
 /**
  * @title BatchedAsyncWrapper
@@ -38,7 +39,7 @@ import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ER
  *         (the depositor approves first). Unwrap uses the inherited OZ
  *         ERC7984ERC20Wrapper lifecycle (`unwrap` + `finalizeUnwrap`).
  */
-contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
+contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7984ERC20Wrapper {
     using SafeERC20 for IERC20;
 
     /// @dev Max batch size — bounded by the 64 bits of the bitmap.
@@ -72,13 +73,10 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
     );
     event WrapFinalized(address indexed recipient, bytes32 amount, uint256[] ids);
 
-    error ZeroAmount();
-    error ZeroAddress();
+    // ZeroAmount, ZeroAddress, DuplicateId, ExternalWrapNotSupported are inherited from IERC7984AsyncWrapper.
     error InvalidBatchSize();
     error BatchNotStarted();
     error BatchNotComplete();
-    error DuplicateId();
-    error ExternalWrapNotSupported();
 
     constructor(
         uint256 _maxBatchDeposits,
@@ -123,6 +121,36 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
 
     function onTransferReceived(address, address, uint256, bytes calldata) public pure override returns (bytes4) {
         revert ExternalWrapNotSupported();
+    }
+
+    // -----------------------------------------------------------------------
+    // IERC7984AsyncWrapper: deposit count + unwrap lifecycle
+    // -----------------------------------------------------------------------
+
+    /// @inheritdoc IERC7984AsyncWrapper
+    function getDepositsLength() external view override returns (uint256) {
+        return totalDeposits;
+    }
+
+    /// @inheritdoc IERC7984AsyncWrapper
+    function initUnwrap(
+        externalEuint64 encryptedAmount,
+        bytes calldata inputProof,
+        address destination
+    ) external override {
+        if (destination == address(0)) revert ZeroAddress();
+        euint64 amount = FHE.fromExternal(encryptedAmount, inputProof);
+        FHE.allowThis(amount);
+        _unwrap(msg.sender, destination, amount);
+    }
+
+    /// @inheritdoc IERC7984AsyncWrapper
+    function initUnwrap(uint64 compressedAmount, address destination) external override {
+        if (destination == address(0)) revert ZeroAddress();
+        if (compressedAmount == 0) revert ZeroAmount();
+        euint64 amount = FHE.asEuint64(compressedAmount);
+        FHE.allowThis(amount);
+        _unwrap(msg.sender, destination, amount);
     }
 
     // -----------------------------------------------------------------------
@@ -242,7 +270,7 @@ contract BatchedAsyncWrapper is ZamaEthereumConfig, ERC7984ERC20Wrapper {
      * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
      * @param recipient Address to match deposits against and mint the total to.
      */
-    function finalizeWrap(uint256[] calldata ids, address recipient) external {
+    function finalizeWrap(uint256[] calldata ids, address recipient) external override {
         if (recipient == address(0)) revert ZeroAddress();
 
         euint64 total = E_ZERO;

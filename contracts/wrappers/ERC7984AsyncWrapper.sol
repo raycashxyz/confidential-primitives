@@ -33,6 +33,28 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
 
     euint64 public immutable E_ZERO;
 
+    struct Deposit {
+        address depositor;
+        uint256 originalAmount;
+        euint64 amount;
+        eaddress recipient;
+        bytes data;
+    }
+
+    event WrapInitiated(
+        uint256 indexed depositIndex,
+        address indexed depositor,
+        uint256 amount,
+        bytes32 encryptedRecipientHandle,
+        bytes data
+    );
+    event WrapFinalized(
+        address indexed recipient,
+        bytes32 amount,
+        bytes32 recipientBalance,
+        uint256[] ids
+    );
+
     Deposit[] public deposits;
 
     /// @notice Number of deposits (for tests / off-chain).

@@ -12,7 +12,7 @@ Convert a cleartext ERC-20 into a confidential ERC-7984 token through a two-phas
 
 - **`ERC7984AsyncWrapper`** — abstract base: deposit recording, homomorphic decoy matching, and OpenZeppelin's async unwrap lifecycle.
 - **`SimpleAsyncWrapper`** — minimal concrete wrapper; deposits are pulled via a direct `transferFrom`. Finalizes with the *rewrite* strategy (zero each matched deposit's encrypted amount).
-- **`BatchedAsyncWrapper`** — deposits land in fixed-size batches tracked by a single **confidential bitmap** nullifier. Its `finalizeWrap(uint256[] ids, …)` takes *batch ids* (a length-1 array = one batch), matching the shared `IERC7984AsyncWrapper` signature, and hoists the per-slot bitwise + ACL work into one bulk pass per batch. (`finalizeWrapPerSlot` is kept as the naive per-slot reference for the benchmark.)
+- **`BatchedAsyncWrapper`** — deposits land in fixed-size batches tracked by a single **confidential bitmap** nullifier. Its `finalizeWrap(uint256[] ids, …)` takes *batch ids* (a length-1 array = one batch), implementing the shared `IERC7984AsyncWrapper` interface, and hoists the per-slot bitwise + ACL work into one bulk pass per batch. (`finalizeWrapPerSlot` is kept as the naive per-slot reference for the benchmark.)
 
 ## Why the batched-bitmap finalize
 
