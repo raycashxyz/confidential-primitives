@@ -10,5 +10,6 @@ src/deployers/
 # env / misc
 .env
 .env.*
+.npmrc
 *.log
 .DS_Store
