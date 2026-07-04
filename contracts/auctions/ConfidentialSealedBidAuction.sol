@@ -216,9 +216,14 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Reduce `xs` to its max by repeated pairwise {FHE.max}, halving in place.
-     *      Depth is ceil(log2(N)) compares versus N for a serial scan — the same depth
-     *      trick as the V2 wrapper's payout sum, applied to argmax.
+     * @dev Reduce `xs` to its max by pairwise {FHE.max}, halving the array in place each
+     *      round: xs[i] = max(xs[2i], xs[2i+1]) for i < ceil(n/2), an odd tail carried
+     *      through unchanged. Same shape as BatchedAsyncWrapperV2._sumTree (see its
+     *      NatSpec for the full mechanics): total ops stay N-1, but FHEVM meters
+     *      SEQUENTIAL DEPTH per tx (depth(result) = opHCU + max(depth of inputs), cap
+     *      5M), and the tree bounds any value's chain to one `max` per round — depth
+     *      ceil(log2 N) instead of N for a serial scan. That is what lets the bidder
+     *      count grow to the total-HCU budget rather than a ~30-bid depth ceiling.
      */
     function _maxTree(euint64[] memory xs) private returns (euint64) {
         uint256 n = xs.length;

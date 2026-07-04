@@ -318,10 +318,33 @@ contract BatchedAsyncWrapperV2 is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Reduce `xs` to a single sum by repeated pairwise addition, halving the
-     *      array in place each round. Critical-path depth is ceil(log2(N)) adds
-     *      versus N for a serial accumulator — which is what moves the batch-size
-     *      ceiling off the FHEVM per-tx HCU DEPTH limit. Returns E_ZERO when empty.
+     * @dev Reduce `xs` to a single encrypted sum with a pairwise (binary-tree) reduction
+     *      instead of a serial fold. Returns E_ZERO when empty.
+     *
+     *      Why not `for (i) sum = FHE.add(sum, xs[i])`? Both shapes emit the same number
+     *      of adds (N-1), but FHEVM meters SEQUENTIAL DEPTH per transaction, not just
+     *      total work: every result handle carries depth(result) = opHCU + max(depth of
+     *      its inputs), and the tx reverts if any handle reaches 5M. In a serial fold the
+     *      accumulator flows through every add, so its depth grows by ~162k per element
+     *      and crosses 5M near N = 29. In the tree, each round's adds consume only the
+     *      PREVIOUS round's outputs, so any value flows through at most one add per
+     *      round: final depth is ceil(log2 N) adds (~1.1M at N = 48), and the batch-size
+     *      ceiling moves to the 20M total-HCU budget instead.
+     *
+     *      Mechanics of a round: pair up neighbours and write each pair's sum to the
+     *      front of the array, in place —
+     *          xs[0] = xs[0] + xs[1];  xs[1] = xs[2] + xs[3];  xs[2] = xs[4] + xs[5]; ...
+     *      i.e. xs[i] = xs[2i] + xs[2i+1] for i < half, where half = ceil(n / 2). Writes
+     *      never clobber unread inputs (2i >= i always). If n is odd the last element has
+     *      no partner and is carried through unchanged (`r < n` guard) — it just joins a
+     *      pair in a later round. The live prefix halves every round: n -> ceil(n/2) ->
+     *      ... -> 1, after which xs[0] holds the sum of every original element exactly
+     *      once.
+     *
+     *      Example, n = 5 (a b c d e):
+     *          round 1: [a+b, c+d, e]        depth grown by 1 add
+     *          round 2: [a+b+c+d, e]         depth grown by 1 add
+     *          round 3: [a+b+c+d+e]          depth grown by 1 add  (serial fold: 4 deep)
      */
     function _sumTree(euint64[] memory xs) private returns (euint64) {
         uint256 n = xs.length;
