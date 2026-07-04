@@ -148,6 +148,6 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched)", () => 
     console.log("  └────────┴───────────────┴───────────────┴───────────────┴───────────────┘");
 
     expect(results.length).toBe(BATCH_SIZES.length);
-  });
+  }, 300_000); // gas sweep (4 batch sizes × 3 finalize strategies, FHE mocks) — slow on CI runners
 
 });
