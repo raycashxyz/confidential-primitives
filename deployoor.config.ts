@@ -5,6 +5,6 @@ export default defineConfig({
   out: "./src/deployers",
   deploymentsPath: "./deployments",
   // Only the deployable, non-abstract contracts (the base + interface can't be deployed).
-  include: /^(MockUSDC|SimpleAsyncWrapper|BatchedAsyncWrapper)$/,
+  include: /^(MockUSDC|SimpleAsyncWrapper|BatchedAsyncWrapper|BatchedAsyncWrapperV2)$/,
   plugins: [],
 });
