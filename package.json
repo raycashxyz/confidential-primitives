@@ -1,8 +1,9 @@
 {
   "name": "@raycashxyz/confidential-primitives",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Reusable confidential (FHE) smart-contract primitives for the Zama FHEVM stack — async ERC-7984 token wrappers with a gas-optimized batched-bitmap finalize.",
   "license": "MIT",
+  "packageManager": "pnpm@10.18.3",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/raycashxyz/confidential-primitives.git"
@@ -28,7 +29,10 @@
     "compile": "hardhat compile",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "hardhat clean"
+    "clean": "hardhat clean",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "dependencies": {
     "@fhevm/solidity": "^0.10.0",
@@ -36,6 +40,7 @@
     "@openzeppelin/contracts": "^5.4.0"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@deployoor/hardhat": "^0.1.1",
     "@deployoor/testing": "^0.2.2",
     "@fhevm/mock-utils": "^0.4.0",
