@@ -35,15 +35,15 @@
     "release": "changeset publish"
   },
   "dependencies": {
-    "@fhevm/solidity": "^0.10.0",
-    "@openzeppelin/confidential-contracts": "0.3.1",
-    "@openzeppelin/contracts": "^5.4.0"
+    "@fhevm/solidity": "^0.11.1",
+    "@openzeppelin/confidential-contracts": "0.5.1",
+    "@openzeppelin/contracts": "^5.6.1"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@deployoor/hardhat": "^0.1.1",
     "@deployoor/testing": "^0.2.2",
-    "@fhevm/mock-utils": "^0.4.0",
+    "@fhevm/mock-utils": "^0.4.2",
     "@nomicfoundation/hardhat-chai-matchers": "^2.1.0",
     "@nomicfoundation/hardhat-ethers": "^3.1.0",
     "@nomicfoundation/hardhat-network-helpers": "^1.1.0",
@@ -52,7 +52,7 @@
     "deployoor": "^0.3.0",
     "dotenv": "^16.4.7",
     "ethers": "^6.15.0",
-    "fhevm-tevm-mocks": "^0.2.0",
+    "fhevm-tevm-mocks": "^0.3.0",
     "hardhat": "^2.26.0",
     "tevm": "1.0.0-next.149",
     "ts-node": "^10.9.2",
