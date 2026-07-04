@@ -75,7 +75,6 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
 
     // ZeroAmount, ZeroAddress, DuplicateId, ExternalWrapNotSupported are inherited from IERC7984AsyncWrapper.
     error InvalidBatchSize();
-    error BatchNotStarted();
     error BatchNotComplete();
 
     constructor(
@@ -185,8 +184,6 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
             batchFinalized[batchId] = E_ZERO;
         }
 
-        IERC20(address(underlying())).safeTransferFrom(depositor, address(this), amount);
-
         slot = _batchStartIndex(batchId) + batchIndex;
         deposits[slot] = Deposit({
             depositor: depositor,
@@ -197,6 +194,11 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
         totalDeposits += 1;
 
         emit WrapInitiated(batchId, slot, depositor, amount, FHE.toBytes32(verifiedRecipient));
+
+        // Interactions last (Checks-Effects-Interactions): pull tokens only after the deposit is
+        // recorded, so a reentrant initWrap (via a token transfer hook) cannot observe the same
+        // totalDeposits, recompute the same `slot`, and have its record overwritten by this call.
+        IERC20(address(underlying())).safeTransferFrom(depositor, address(this), amount);
     }
 
     // -----------------------------------------------------------------------
@@ -212,8 +214,11 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
     function finalizeWrapPerSlot(uint256 batchId, address recipient) external {
         if (recipient == address(0)) revert ZeroAddress();
         uint256 startIndex = _batchStartIndex(batchId);
-        if (startIndex >= totalDeposits) revert BatchNotStarted();
         uint256 endIndex = startIndex + maxBatchDeposits;
+        // Complete-batch-only, exactly like the bulk path. A partial-batch finalize here would
+        // commit only some of a recipient's slots; a later bulk {finalizeWrap} over the completed
+        // batch re-sums ALL their matches and would re-pay the already-finalized ones.
+        if (totalDeposits < endIndex) revert BatchNotComplete();
 
         // Snapshot the committed bitmap once. A slot is "already finalized" only if a
         // PRIOR finalize set its bit — never within this call, since each slot is visited

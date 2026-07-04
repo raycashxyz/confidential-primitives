@@ -7,7 +7,7 @@
 import {
   describe, it, expect
 } from "vitest";
-import { zeroHash } from "viem";
+import { parseEventLogs, zeroHash } from "viem";
 
 import { createTestEnvironment } from "./setup/environment";
 import type { WalletWithAccount } from "./setup/environment";
@@ -58,7 +58,7 @@ async function boot () {
 
   const initWrap = async (wrapper: WrapperContract, depositor: WalletWithAccount, recipient: `0x${string}`) => {
     const { handle, inputProof } = await encryptRecipient(fhevm.instance, wrapper.address, depositor.account.address, recipient);
-    await send(wrapper.write.initWrap([
+    return send(wrapper.write.initWrap([
       depositor.account.address,
       AMOUNT,
       handle,
@@ -185,6 +185,77 @@ describe("BatchedAsyncWrapper", () => {
       const viaBatched = await decryptBalance(batched, alice);
       expect(viaBatched).toBe(viaPerSlot);
       expect(viaBatched).toBe(AMOUNT * 4n);
+    });
+
+    it("reverts the per-slot path on an incomplete batch", async () => {
+      const {
+        wallets, deployWrapper, fundAndApprove, initWrap
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(4n);
+      await fundAndApprove(wrapper, alice, 2n);
+      for (let i = 0; i < 2; i++) await initWrap(wrapper, alice, alice.account.address); // 2/4 — not full
+
+      // No explicit gas → viem simulates and surfaces the custom error.
+      await assertRevertsWith(
+        wrapper.write.finalizeWrapPerSlot([0n, alice.account.address], txOpts(alice.account)),
+        "BatchNotComplete",
+      );
+    });
+
+    it("does not double-mint when both finalize paths run on the same batch", async () => {
+      const {
+        wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(4n);
+      await fundAndApprove(wrapper, alice, 4n);
+      for (let i = 0; i < 4; i++) await initWrap(wrapper, alice, alice.account.address);
+
+      expect(await decryptBalance(wrapper, alice)).toBe(0n); // before
+      await send(wrapper.write.finalizeWrapPerSlot([0n, alice.account.address], fheTxOpts(alice.account)));
+      const afterPerSlot = await decryptBalance(wrapper, alice);
+      expect(afterPerSlot).toBe(AMOUNT * 4n); // per-slot paid the whole batch
+
+      // Bulk finalize over the SAME batch must pay nothing: every matched slot is already committed.
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
+      expect(await decryptBalance(wrapper, alice)).toBe(afterPerSlot); // no cross-path double-mint
+    });
+
+    it("emits WrapInitiated on deposit and WrapFinalized on finalize", async () => {
+      const {
+        wallets, deployWrapper, fundAndApprove, initWrap, send
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(2n);
+      await fundAndApprove(wrapper, alice, 2n);
+
+      const initReceipt = await initWrap(wrapper, alice, alice.account.address); // slot 0
+      const [initEvent] = parseEventLogs({
+        abi: wrapper.abi,
+        logs: initReceipt.logs,
+        eventName: "WrapInitiated"
+      });
+      if (!initEvent) throw new Error("expected a WrapInitiated event");
+      expect(initEvent.args.batchId).toBe(0n);
+      expect(initEvent.args.slot).toBe(0n);
+      expect(initEvent.args.depositor).toBe(alice.account.address);
+      expect(initEvent.args.amount).toBe(AMOUNT);
+      expect(initEvent.args.eRecipient).not.toBe(zeroHash);
+
+      await initWrap(wrapper, alice, alice.account.address); // slot 1 — batch now complete (2/2)
+      const finalizeReceipt = await send(
+        wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)),
+      );
+      const [finalizeEvent] = parseEventLogs({
+        abi: wrapper.abi,
+        logs: finalizeReceipt.logs,
+        eventName: "WrapFinalized"
+      });
+      if (!finalizeEvent) throw new Error("expected a WrapFinalized event");
+      expect(finalizeEvent.args.recipient).toBe(alice.account.address);
+      expect(finalizeEvent.args.ids).toEqual([0n]);
+      expect(finalizeEvent.args.amount).not.toBe(zeroHash);
     });
   });
 

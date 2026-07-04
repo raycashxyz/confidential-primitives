@@ -50,8 +50,13 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched)", () => 
       const finalizeGas = async (p: Promise<Hex>): Promise<bigint | null> => {
         try {
           return (await send(p)).gasUsed;
-        } catch {
-          return null; // reverted (e.g. FHEVM HCU depth limit)
+        } catch (err) {
+          // A benchmark row that reverts on-chain (e.g. the FHEVM HCU depth limit at high N) is an
+          // expected "did not fit" outcome — record it as null. Anything else (network, ABI, setup)
+          // is a real failure and must surface, not be silently swallowed.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (/revert|HCU|depth|out of gas|gas required|exceeds/i.test(msg)) return null;
+          throw err;
         }
       };
       const encR = (wrapperAddr: Address) =>
