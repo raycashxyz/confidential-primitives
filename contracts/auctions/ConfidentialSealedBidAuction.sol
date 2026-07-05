@@ -76,6 +76,7 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
     event AuctionWon(address indexed winner, uint64 clearingPrice);
 
     error ZeroAddress();
+    error InvalidBiddingDuration();
     error InvalidMaxBidders();
     error TooManyBidders();
     error BiddingClosed();
@@ -91,6 +92,9 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
 
     constructor(address _beneficiary, uint256 _biddingDuration, uint256 _maxBidders) {
         if (_beneficiary == address(0)) revert ZeroAddress();
+        // A zero duration would set biddingEnd to the deployment timestamp, making
+        // bid() revert BiddingClosed from block one — a permanently unusable auction.
+        if (_biddingDuration == 0) revert InvalidBiddingDuration();
         if (_maxBidders == 0 || _maxBidders > MAX_BIDDERS_LIMIT) revert InvalidMaxBidders();
         beneficiary = _beneficiary;
         biddingEnd = block.timestamp + _biddingDuration;

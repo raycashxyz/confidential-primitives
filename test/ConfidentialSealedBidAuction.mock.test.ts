@@ -141,6 +141,14 @@ describe("ConfidentialSealedBidAuction", () => {
       await assertRevertsWith(deployAuction(beneficiary, BIDDING_DURATION, 0n, true), "InvalidMaxBidders");
       await assertRevertsWith(deployAuction(beneficiary, BIDDING_DURATION, 65n, true), "InvalidMaxBidders");
     });
+
+    it("reverts on a zero bidding duration (would brick the auction)", async () => {
+      const { wallets, deployAuction } = await boot();
+      await assertRevertsWith(
+        deployAuction(wallets.deployer.account.address, 0n, MAX_BIDDERS, true),
+        "InvalidBiddingDuration",
+      );
+    });
   });
 
   describe("bidding phase", () => {
