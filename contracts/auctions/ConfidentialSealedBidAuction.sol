@@ -37,11 +37,21 @@ import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
  *         top bidder finalizes their claim first wins.
  */
 contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
+    /// @dev Hard cap on `maxBidders`, keeping the one-shot {reveal} provably completable:
+    ///      the max-tree does N-1 FHE.max ops (~180k HCU each, depth ceil(log2 N)), so 64
+    ///      bidders costs ~11.3M of the 20M total-HCU budget at depth ~1.1M — comfortable
+    ///      headroom. An unbounded set would let a Sybil push reveal past the per-tx
+    ///      budget and permanently block settlement.
+    uint256 private constant MAX_BIDDERS_LIMIT = 64;
+
     /// @notice Auction proceeds recipient (informational in this reference impl).
     address public immutable beneficiary;
 
     /// @notice Bids submitted at or after this timestamp are rejected.
     uint256 public immutable biddingEnd;
+
+    /// @notice Maximum number of distinct bidders admitted (bounds the reveal scan).
+    uint256 public immutable maxBidders;
 
     /// @notice Distinct bidders, in first-bid order — the reduction set for {reveal}.
     address[] public bidders;
@@ -66,6 +76,8 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
     event AuctionWon(address indexed winner, uint64 clearingPrice);
 
     error ZeroAddress();
+    error InvalidMaxBidders();
+    error TooManyBidders();
     error BiddingClosed();
     error BiddingStillOpen();
     error NoBids();
@@ -77,10 +89,12 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
     error NotABidder();
     error NotWinner();
 
-    constructor(address _beneficiary, uint256 _biddingDuration) {
+    constructor(address _beneficiary, uint256 _biddingDuration, uint256 _maxBidders) {
         if (_beneficiary == address(0)) revert ZeroAddress();
+        if (_maxBidders == 0 || _maxBidders > MAX_BIDDERS_LIMIT) revert InvalidMaxBidders();
         beneficiary = _beneficiary;
         biddingEnd = block.timestamp + _biddingDuration;
+        maxBidders = _maxBidders;
     }
 
     // -----------------------------------------------------------------------
@@ -97,9 +111,15 @@ contract ConfidentialSealedBidAuction is ZamaEthereumConfig {
 
         euint64 b = FHE.fromExternal(encryptedBid, inputProof);
         FHE.allowThis(b);
+        // Grant the bidder persistent decrypt rights on their own stored bid: allowThis
+        // only authorizes the CONTRACT to compute on the handle; without this explicit
+        // grant, userDecrypt of the handle returned by {bidHandleOf} would be rejected
+        // by the ACL. (Input-proof binding authorizes submission, not decryption.)
+        FHE.allow(b, msg.sender);
         _bids[msg.sender] = b;
 
         if (!hasBid[msg.sender]) {
+            if (bidders.length >= maxBidders) revert TooManyBidders();
             hasBid[msg.sender] = true;
             bidders.push(msg.sender);
         }

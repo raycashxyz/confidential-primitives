@@ -13,13 +13,14 @@ import { parseEventLogs } from "viem";
 
 import { createTestEnvironment } from "./setup/environment";
 import type { WalletWithAccount } from "./setup/environment";
-import { encryptValues, publicDecryptEuint } from "./setup/fhe";
+import { encryptValues, publicDecryptEuint, decryptEuint } from "./setup/fhe";
 import { txOpts, fheTxOpts } from "./setup/tx";
 import { assertRevertsWith } from "./setup/asserts";
 import { getOrDeployConfidentialSealedBidAuction } from "../src/deployers/ConfidentialSealedBidAuction";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const BIDDING_DURATION = 1000n;
+const MAX_BIDDERS = 8n;
 
 type AuctionContract = Awaited<ReturnType<typeof getOrDeployConfidentialSealedBidAuction>>["contract"];
 
@@ -30,23 +31,46 @@ async function boot () {
   } = env;
   const { deployer } = wallets;
 
-  const send = async (p: Promise<`0x${string}`>) => publicClient.waitForTransactionReceipt({ hash: await p });
+  // FHE calls (fheTxOpts) carry an explicit gas limit, so viem skips simulation and an
+  // on-chain revert lands as a receipt instead of a throw — check status so a failed
+  // bid/reveal/settle surfaces immediately rather than corrupting later assertions.
+  const send = async (p: Promise<`0x${string}`>) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: await p });
+    if (receipt.status !== "success") throw new Error(`tx reverted: ${receipt.transactionHash}`);
+    return receipt;
+  };
 
-  const { contract: auction } = await getOrDeployConfidentialSealedBidAuction({
-    walletClient: deployer,
-    publicClient,
-    store,
-    args: [deployer.account.address, BIDDING_DURATION],
-  });
+  // Deploy an auction with custom parameters (constructor-validation / cap tests).
+  const deployAuction = (
+    beneficiary: `0x${string}`,
+    duration: bigint,
+    maxBidders: bigint,
+    force = false,
+  ) =>
+    getOrDeployConfidentialSealedBidAuction({
+      walletClient: deployer,
+      publicClient,
+      store,
+      args: [
+        beneficiary,
+        duration,
+        maxBidders
+      ],
+      force,
+    });
 
-  const encryptBid = async (bidder: WalletWithAccount, value: bigint) => {
+  const { contract: auction } = await deployAuction(deployer.account.address, BIDDING_DURATION, MAX_BIDDERS);
+
+  type AuctionContract = typeof auction;
+
+  const encryptBidFor = async (target: AuctionContract, bidder: WalletWithAccount, value: bigint) => {
     const [handle, inputProof] = await encryptValues(
       fhevm.instance,
       [{
         type: "add64",
         value
       }],
-      auction.address,
+      target.address,
       bidder.account.address,
     );
     return {
@@ -55,10 +79,14 @@ async function boot () {
     };
   };
 
-  const placeBid = async (bidder: WalletWithAccount, value: bigint) => {
-    const { handle, inputProof } = await encryptBid(bidder, value);
-    return send(auction.write.bid([handle, inputProof], fheTxOpts(bidder.account)));
+  const encryptBid = (bidder: WalletWithAccount, value: bigint) => encryptBidFor(auction, bidder, value);
+
+  const bidOn = async (target: AuctionContract, bidder: WalletWithAccount, value: bigint) => {
+    const { handle, inputProof } = await encryptBidFor(target, bidder, value);
+    return send(target.write.bid([handle, inputProof], fheTxOpts(bidder.account)));
   };
+
+  const placeBid = (bidder: WalletWithAccount, value: bigint) => bidOn(auction, bidder, value);
 
   // reveal() then settle() — returns the KMS-decrypted clearing price.
   const revealAndSettle = async (caller: WalletWithAccount): Promise<bigint> => {
@@ -92,11 +120,28 @@ async function boot () {
   };
 
   return {
-    wallets, auction, send, warpTime, encryptBid, placeBid, revealAndSettle, claimFlag
+    wallets, fhevm, auction, send, warpTime, deployAuction, encryptBid, encryptBidFor, bidOn, placeBid, revealAndSettle, claimFlag
   };
 }
 
 describe("ConfidentialSealedBidAuction", () => {
+
+  describe("constructor", () => {
+    it("reverts on a zero beneficiary", async () => {
+      const { deployAuction } = await boot();
+      await assertRevertsWith(
+        deployAuction(ZERO_ADDRESS, BIDDING_DURATION, MAX_BIDDERS, true),
+        "ZeroAddress",
+      );
+    });
+
+    it("reverts on a zero or above-limit bidder cap", async () => {
+      const { wallets, deployAuction } = await boot();
+      const beneficiary = wallets.deployer.account.address;
+      await assertRevertsWith(deployAuction(beneficiary, BIDDING_DURATION, 0n, true), "InvalidMaxBidders");
+      await assertRevertsWith(deployAuction(beneficiary, BIDDING_DURATION, 65n, true), "InvalidMaxBidders");
+    });
+  });
 
   describe("bidding phase", () => {
     it("records distinct bidders and rejects bids after close", async () => {
@@ -124,6 +169,40 @@ describe("ConfidentialSealedBidAuction", () => {
         auction.write.reveal(txOpts(wallets.alice.account)),
         "BiddingStillOpen",
       );
+    });
+
+    it("rejects a new bidder once the cap is reached (replacements still allowed)", async () => {
+      const {
+        wallets, deployAuction, bidOn, encryptBidFor
+      } = await boot();
+      const { contract: small } = await deployAuction(
+        wallets.deployer.account.address, BIDDING_DURATION, 2n, true,
+      );
+
+      await bidOn(small, wallets.alice, 100n);
+      await bidOn(small, wallets.bob, 200n);
+      expect(await small.read.bidderCount()).toBe(2n);
+
+      // A third distinct bidder is refused...
+      const carol = await encryptBidFor(small, wallets.carol, 300n);
+      await assertRevertsWith(
+        small.write.bid([carol.handle, carol.inputProof], txOpts(wallets.carol.account)),
+        "TooManyBidders",
+      );
+      // ...but an existing bidder can still replace their own bid.
+      await bidOn(small, wallets.alice, 150n);
+      expect(await small.read.bidderCount()).toBe(2n);
+    });
+
+    it("lets a bidder decrypt their own stored bid via bidHandleOf (ACL grant)", async () => {
+      const {
+        wallets, fhevm, auction, placeBid
+      } = await boot();
+      await placeBid(wallets.alice, 123n);
+
+      const handle = await auction.read.bidHandleOf([wallets.alice.account.address]);
+      const value = await decryptEuint(fhevm.instance, handle, auction.address, wallets.alice);
+      expect(value).toBe(123n);
     });
   });
 
@@ -157,6 +236,38 @@ describe("ConfidentialSealedBidAuction", () => {
         "NotRevealed",
       );
     });
+
+    it("reverts reveal with no bids", async () => {
+      const { wallets, auction, warpTime } = await boot();
+      await warpTime(BIDDING_DURATION + 1n);
+
+      await assertRevertsWith(
+        auction.write.reveal(txOpts(wallets.alice.account)),
+        "NoBids",
+      );
+    });
+
+    it("rejects a second reveal and a second settle", async () => {
+      const {
+        wallets, auction, warpTime, placeBid, revealAndSettle, claimFlag
+      } = await boot();
+      await placeBid(wallets.alice, 100n);
+      await warpTime(BIDDING_DURATION + 1n);
+      const price = await revealAndSettle(wallets.deployer);
+      expect(price).toBe(100n);
+
+      await assertRevertsWith(
+        auction.write.reveal(txOpts(wallets.deployer.account)),
+        "AlreadyRevealed",
+      );
+      // Reuse a fresh, valid KMS proof (the claim flag's) to prove the guard fires
+      // before signature verification.
+      const alice = await claimFlag(wallets.alice);
+      await assertRevertsWith(
+        auction.write.settle([alice.flag, alice.proof], txOpts(wallets.deployer.account)),
+        "AlreadySettled",
+      );
+    });
   });
 
   describe("claim", () => {
@@ -188,6 +299,33 @@ describe("ConfidentialSealedBidAuction", () => {
       await send(auction.write.finalizeClaim([bob.flag, bob.proof], fheTxOpts(wallets.bob.account)));
       expect(await auction.read.winner()).toBe(wallets.bob.account.address);
       expect(await auction.read.clearingPrice()).toBe(250n);
+    });
+
+    it("resolves a tie first-come: the first tied claimant to finalize wins", async () => {
+      const {
+        wallets, auction, send, warpTime, placeBid, revealAndSettle, claimFlag
+      } = await boot();
+
+      await placeBid(wallets.alice, 250n); // tied top
+      await placeBid(wallets.bob, 250n); // tied top
+      await placeBid(wallets.carol, 100n);
+
+      await warpTime(BIDDING_DURATION + 1n);
+      expect(await revealAndSettle(wallets.deployer)).toBe(250n);
+
+      // Both tied bidders hold a winning flag.
+      const alice = await claimFlag(wallets.alice);
+      const bob = await claimFlag(wallets.bob);
+      expect(alice.flag).toBe(1n);
+      expect(bob.flag).toBe(1n);
+
+      // Alice finalizes first and takes it; bob's valid proof now bounces off AlreadyWon.
+      await send(auction.write.finalizeClaim([alice.flag, alice.proof], fheTxOpts(wallets.alice.account)));
+      expect(await auction.read.winner()).toBe(wallets.alice.account.address);
+      await assertRevertsWith(
+        auction.write.finalizeClaim([bob.flag, bob.proof], txOpts(wallets.bob.account)),
+        "AlreadyWon",
+      );
     });
   });
 });
