@@ -67,7 +67,7 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
     // -----------------------------------------------------------------------
 
     /// @dev Disabled — all deposits must go through child-specific initWrap.
-    function wrap(address, uint256) public pure override {
+    function wrap(address, uint256) public pure override returns (euint64) {
         revert ExternalWrapNotSupported();
     }
 
@@ -77,12 +77,12 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
     }
 
     /// @dev Disabled — force through child's initUnwrap for consistent interface.
-    function unwrap(address, address, euint64) public pure override {
+    function unwrap(address, address, euint64) public pure override returns (bytes32) {
         revert ExternalWrapNotSupported();
     }
 
     /// @dev Disabled — force through child's initUnwrap.
-    function unwrap(address, address, externalEuint64, bytes calldata) public pure override {
+    function unwrap(address, address, externalEuint64, bytes calldata) public pure override returns (bytes32) {
         revert ExternalWrapNotSupported();
     }
 

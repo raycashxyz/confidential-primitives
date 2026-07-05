@@ -114,7 +114,7 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
     // Disabled OZ wrap paths — deposits must go through initWrap
     // -----------------------------------------------------------------------
 
-    function wrap(address, uint256) public pure override {
+    function wrap(address, uint256) public pure override returns (euint64) {
         revert ExternalWrapNotSupported();
     }
 
