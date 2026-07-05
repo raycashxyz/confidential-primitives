@@ -123,7 +123,10 @@ contract BatchedAsyncWrapperV2 is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7
     error NotCurrentBatch();
     error NothingToSeal();
     error SealDelayNotElapsed();
+    error SealDelayTooShort();
     error AlreadyFinalized();
+    error UnauthorizedDepositor();
+    error AmountNotMultipleOfRate();
 
     constructor(
         uint256 _maxBatchDeposits,
@@ -137,6 +140,11 @@ contract BatchedAsyncWrapperV2 is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7
     {
         if (address(_underlying) == address(0)) revert ZeroAddress();
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
+        // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could
+        // seal every batch at fill count 1, collapsing the anonymity set to a single
+        // deposit. Zero is rejected; choosing a meaningfully large delay (hours) is
+        // still the deployer's responsibility, like maxBatchDeposits itself.
+        if (_sealDelay == 0) revert SealDelayTooShort();
         maxBatchDeposits = _maxBatchDeposits;
         sealDelay = _sealDelay;
         E_ZERO = FHE.asEuint64(0);
@@ -193,6 +201,17 @@ contract BatchedAsyncWrapperV2 is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7
      * @notice Record a deposit into the current batch by pulling `amount` underlying
      *         from `depositor` (who must have approved this wrapper). `inputProof`
      *         must bind `eRecipient` to `(this, msg.sender)`.
+     *
+     *         The caller MUST be the depositor: `eRecipient` is caller-supplied, so a
+     *         third party could otherwise spend a standing allowance and route the
+     *         wrapped tokens to a recipient of THEIR choosing — hidden, because the
+     *         recipient is encrypted. This also matches the proof-binding reality:
+     *         the recipient encrypts their address against the depositor as
+     *         userAddress, so only the depositor can submit it anyway.
+     *
+     *         `amount` must be an exact multiple of {rate}: the cleartext amount is
+     *         recorded and pulled in full, so a non-multiple would transfer more
+     *         underlying in than the floored confidential units minted against it.
      * @return slot Global slot index of the new deposit.
      */
     function initWrap(
@@ -201,7 +220,9 @@ contract BatchedAsyncWrapperV2 is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external returns (uint256 slot) {
+        if (depositor != msg.sender) revert UnauthorizedDepositor();
         if (amount == 0) revert ZeroAmount();
+        if (amount % rate() != 0) revert AmountNotMultipleOfRate();
         uint64 compressed = SafeCast.toUint64(amount / rate());
         if (compressed == 0) revert ZeroAmount();
 

@@ -154,16 +154,17 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched vs v2)", 
         return receipt;
       };
 
-      const approveAndFill = async (wrapper: { address: Address; write: { initWrap: (args: unknown[], opts: object) => Promise<Hex> } }, n: number) => {
-        await send(underlying.write.approve([wrapper.address, AMOUNT * BigInt(n)], txOpts(alice.account)));
+      // Approve then run n deposits; the caller supplies the wrapper-specific initWrap
+      // call so the generated viem tuple types stay intact (no structural erasure).
+      const approveAndFill = async (
+        address: Address,
+        n: number,
+        depositOne: (handle: Hex, inputProof: Hex, i: number) => Promise<unknown>,
+      ) => {
+        await send(underlying.write.approve([address, AMOUNT * BigInt(n)], txOpts(alice.account)));
         for (let i = 0; i < n; i++) {
-          const { handle, inputProof } = await encR(wrapper.address);
-          await sendOk(wrapper.write.initWrap([
-            alice.account.address,
-            AMOUNT,
-            handle,
-            inputProof
-          ], fheTxOpts(alice.account)), `initWrap #${i}`);
+          const { handle, inputProof } = await encR(address);
+          await depositOne(handle, inputProof, i);
         }
       };
 
@@ -201,7 +202,13 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched vs v2)", 
           ],
           force: true, // deployoor dedups by contract name — force distinct instances
         });
-        await approveAndFill(contract, n);
+        await approveAndFill(contract.address, n, (handle, inputProof, i) =>
+          sendOk(contract.write.initWrap([
+            alice.account.address,
+            AMOUNT,
+            handle,
+            inputProof
+          ], fheTxOpts(alice.account)), `initWrap #${i}`));
         return contract;
       };
 
@@ -212,14 +219,20 @@ describe("Gas Estimation (rewrite vs bitmap per-slot vs bitmap batched vs v2)", 
           store,
           args: [
             BigInt(n),
-            0n, // sealDelay 0 — bench fills every batch to the brim anyway
+            1n, // minimal sealDelay — the bench fills every batch to the brim anyway
             underlying.address,
             "BatchedV2",
             "bwV2"
           ],
           force: true,
         });
-        await approveAndFill(contract, n);
+        await approveAndFill(contract.address, n, (handle, inputProof, i) =>
+          sendOk(contract.write.initWrap([
+            alice.account.address,
+            AMOUNT,
+            handle,
+            inputProof
+          ], fheTxOpts(alice.account)), `v2 initWrap #${i}`));
         return contract;
       };
 

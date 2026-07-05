@@ -22,6 +22,9 @@ import { assertRevertsWith } from "./setup/asserts";
 import { getOrDeployMockUSDC } from "../src/deployers/MockUSDC";
 import { getOrDeployBatchedAsyncWrapperV2 } from "../src/deployers/BatchedAsyncWrapperV2";
 
+// (both deployers are also used inline by the rate()-multiple test, which needs an
+// 18-decimal underlying instead of boot()'s 6-decimal one)
+
 const AMOUNT = 100n;
 const SEAL_DELAY = 3600n; // 1h
 
@@ -34,7 +37,14 @@ async function boot () {
   } = env;
   const { deployer } = wallets;
 
-  const send = async (p: Promise<`0x${string}`>) => publicClient.waitForTransactionReceipt({ hash: await p });
+  // FHE calls (fheTxOpts) carry an explicit gas limit, so viem skips simulation and an
+  // on-chain revert lands as a receipt instead of a throw — check status so a failed
+  // deposit/finalize surfaces immediately rather than corrupting later assertions.
+  const send = async (p: Promise<`0x${string}`>) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: await p });
+    if (receipt.status !== "success") throw new Error(`tx reverted: ${receipt.transactionHash}`);
+    return receipt;
+  };
 
   const { contract: underlying } = await getOrDeployMockUSDC({
     walletClient: deployer,
@@ -80,7 +90,7 @@ async function boot () {
   };
 
   return {
-    wallets, underlying, send, warpTime, deployWrapper, fundAndApprove, initWrap, decryptBalance
+    publicClient, wallets, store, fhevm, underlying, send, warpTime, deployWrapper, fundAndApprove, initWrap, decryptBalance
   };
 }
 
@@ -102,9 +112,97 @@ describe("BatchedAsyncWrapperV2", () => {
       const { contract: wrapper } = await deployWrapper(48n);
       expect(await wrapper.read.maxBatchDeposits()).toBe(48n);
     });
+
+    it("reverts on a zero seal delay (would collapse the anonymity set)", async () => {
+      const { deployWrapper } = await boot();
+      await assertRevertsWith(deployWrapper(4n, 0n), "SealDelayTooShort");
+    });
   });
 
   describe("initWrap", () => {
+    it("reverts when the caller is not the depositor (allowance-theft guard)", async () => {
+      const {
+        wallets, fhevm, deployWrapper, fundAndApprove
+      } = await boot();
+      const { alice, bob } = wallets;
+      const { contract: wrapper } = await deployWrapper(4n);
+      await fundAndApprove(wrapper, alice, 1n); // alice has a standing allowance
+
+      // bob tries to spend alice's allowance with a recipient HE chose (encrypted, so
+      // the redirect would be invisible). The depositor check must stop him.
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, bob.account.address, bob.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrap([
+          alice.account.address,
+          AMOUNT,
+          handle,
+          inputProof
+        ], txOpts(bob.account)),
+        "UnauthorizedDepositor",
+      );
+    });
+
+    it("reverts on amounts that are not exact multiples of rate()", async () => {
+      const {
+        publicClient, wallets, store, fhevm, send
+      } = await boot();
+      const { deployer, alice } = wallets;
+
+      // An 18-decimal underlying against the wrapper's 6 confidential decimals gives
+      // rate() = 1e12; a non-multiple would pull more in than the units minted.
+      const { contract: underlying18 } = await getOrDeployMockUSDC({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [18],
+        force: true,
+      });
+      const { contract: wrapper } = await getOrDeployBatchedAsyncWrapperV2({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [
+          4n,
+          SEAL_DELAY,
+          underlying18.address,
+          "Batched Confidential V2 (18d)",
+          "bWRAP2e18"
+        ],
+        force: true,
+      });
+      const rate = 10n ** 12n;
+      await send(underlying18.write.transfer([alice.account.address, rate * 2n], txOpts(deployer.account)));
+      await send(underlying18.write.approve([wrapper.address, rate * 2n], txOpts(alice.account)));
+
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrap([
+          alice.account.address,
+          rate + 1n,
+          handle,
+          inputProof
+        ], txOpts(alice.account)),
+        "AmountNotMultipleOfRate",
+      );
+
+      // The exact multiple goes through and records the full cleartext amount.
+      const { handle: h2, inputProof: p2 } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await send(wrapper.write.initWrap([
+        alice.account.address,
+        rate,
+        h2,
+        p2
+      ], fheTxOpts(alice.account)));
+      const deposit = await wrapper.read.deposits([0n]);
+      expect(deposit[1]).toBe(rate);
+    });
+
     it("pulls underlying, records the deposit, and auto-closes a full batch", async () => {
       const {
         wallets, underlying, deployWrapper, fundAndApprove, initWrap
