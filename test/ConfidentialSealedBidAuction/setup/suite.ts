@@ -1,8 +1,14 @@
 /**
  * Shared harness + `boot()` factory for the ConfidentialSealedBidAuction suites (split across
  * sibling *.mock.test.ts files so vitest runs them on separate workers). Each test file calls
- * `useAuctionSuite()` at the top level. The auction needs no shared baseline contract, so each
- * test deploys its own auction (force: true).
+ * `useAuctionSuite()` at the top level.
+ *
+ * The default auction is deployed lazily on first use via `getAuction()`, so constructor /
+ * cap tests (which only call `deployAuction`) skip the deploy entirely. It is NOT baked into
+ * the snapshot baseline: unlike the plain-ERC20 MockUSDC, an FHE contract's constructor
+ * ciphertexts + ACL don't survive a loadState restore for later FHE ops, so FHE contracts
+ * must be (re)deployed per test. `deployAuction` (force:true) covers custom-param cases —
+ * the chain rolls back each test but deployoor's store does not.
  */
 import { beforeAll, beforeEach } from "vitest";
 import { parseEventLogs } from "viem";
@@ -17,6 +23,8 @@ import { getOrDeployConfidentialSealedBidAuction } from "../../../src/deployers/
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const BIDDING_DURATION = 1000n;
 export const MAX_BIDDERS = 8n;
+
+type AuctionContract = Awaited<ReturnType<typeof getOrDeployConfidentialSealedBidAuction>>["contract"];
 
 /** Register the per-file harness (once per file) and return the `boot()` helper factory. */
 export function useAuctionSuite () {
@@ -63,9 +71,15 @@ export function useAuctionSuite () {
         force,
       });
 
-    const { contract: auction } = await deployAuction(deployer.account.address, BIDDING_DURATION, MAX_BIDDERS);
-
-    type AuctionContract = typeof auction;
+    // The default auction, deployed lazily + memoized on first use within a test. Constructor /
+    // cap tests never touch it (they use `deployAuction` directly), so they skip the deploy.
+    let _auction: AuctionContract | undefined;
+    const getAuction = async (): Promise<AuctionContract> => {
+      if (!_auction) {
+        ({ contract: _auction } = await deployAuction(deployer.account.address, BIDDING_DURATION, MAX_BIDDERS));
+      }
+      return _auction;
+    };
 
     const encryptBidFor = async (target: AuctionContract, bidder: WalletWithAccount, value: bigint) => {
       const [handle, inputProof] = await encryptValues(
@@ -83,17 +97,18 @@ export function useAuctionSuite () {
       };
     };
 
-    const encryptBid = (bidder: WalletWithAccount, value: bigint) => encryptBidFor(auction, bidder, value);
+    const encryptBid = async (bidder: WalletWithAccount, value: bigint) => encryptBidFor(await getAuction(), bidder, value);
 
     const bidOn = async (target: AuctionContract, bidder: WalletWithAccount, value: bigint) => {
       const { handle, inputProof } = await encryptBidFor(target, bidder, value);
       return send(target.write.bid([handle, inputProof], fheTxOpts(bidder.account)));
     };
 
-    const placeBid = (bidder: WalletWithAccount, value: bigint) => bidOn(auction, bidder, value);
+    const placeBid = async (bidder: WalletWithAccount, value: bigint) => bidOn(await getAuction(), bidder, value);
 
     // reveal() then settle() — returns the KMS-decrypted clearing price.
     const revealAndSettle = async (caller: WalletWithAccount): Promise<bigint> => {
+      const auction = await getAuction();
       const revealReceipt = await send(auction.write.reveal(fheTxOpts(caller.account)));
       const [revealEvent] = parseEventLogs({
         abi: auction.abi,
@@ -109,6 +124,7 @@ export function useAuctionSuite () {
     // claim() then decrypt the 1/0 win flag WITHOUT finalizing — tests inspect the flag
     // and choose how to finalize.
     const claimFlag = async (bidder: WalletWithAccount): Promise<{ flag: bigint; proof: `0x${string}` }> => {
+      const auction = await getAuction();
       const claimReceipt = await send(auction.write.claim(fheTxOpts(bidder.account)));
       const [claimEvent] = parseEventLogs({
         abi: auction.abi,
@@ -124,7 +140,7 @@ export function useAuctionSuite () {
     };
 
     return {
-      wallets, fhevm, auction, send, warpTime, deployAuction, encryptBid, encryptBidFor, bidOn, placeBid, revealAndSettle, claimFlag
+      wallets, fhevm, getAuction, send, warpTime, deployAuction, encryptBid, encryptBidFor, bidOn, placeBid, revealAndSettle, claimFlag
     };
   };
 }

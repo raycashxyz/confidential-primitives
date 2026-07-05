@@ -16,8 +16,9 @@ const boot = useAuctionSuite();
 describe("ConfidentialSealedBidAuction bidding phase", () => {
   it("records distinct bidders and rejects bids after close", async () => {
     const {
-      wallets, auction, warpTime, encryptBid, placeBid
+      wallets, getAuction, warpTime, encryptBid, placeBid
     } = await boot();
+    const auction = await getAuction();
 
     await placeBid(wallets.alice, 100n);
     await placeBid(wallets.bob, 250n);
@@ -32,7 +33,8 @@ describe("ConfidentialSealedBidAuction bidding phase", () => {
   });
 
   it("reverts reveal while bidding is still open", async () => {
-    const { wallets, auction, placeBid } = await boot();
+    const { wallets, getAuction, placeBid } = await boot();
+    const auction = await getAuction();
     await placeBid(wallets.alice, 100n);
 
     await assertRevertsWith(
@@ -66,8 +68,9 @@ describe("ConfidentialSealedBidAuction bidding phase", () => {
 
   it("lets a bidder decrypt their own stored bid via bidHandleOf (ACL grant)", async () => {
     const {
-      wallets, fhevm, auction, placeBid
+      wallets, fhevm, getAuction, placeBid
     } = await boot();
+    const auction = await getAuction();
     await placeBid(wallets.alice, 123n);
 
     const handle = await auction.read.bidHandleOf([wallets.alice.account.address]);

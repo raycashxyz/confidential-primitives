@@ -15,8 +15,9 @@ const boot = useAuctionSuite();
 describe("ConfidentialSealedBidAuction reveal + settle", () => {
   it("reveals only the highest bid as the clearing price", async () => {
     const {
-      wallets, auction, warpTime, placeBid, revealAndSettle
+      wallets, getAuction, warpTime, placeBid, revealAndSettle
     } = await boot();
+    const auction = await getAuction();
 
     await placeBid(wallets.alice, 100n);
     await placeBid(wallets.bob, 250n); // highest
@@ -32,8 +33,9 @@ describe("ConfidentialSealedBidAuction reveal + settle", () => {
 
   it("reverts settle before reveal", async () => {
     const {
-      wallets, auction, warpTime, placeBid
+      wallets, getAuction, warpTime, placeBid
     } = await boot();
+    const auction = await getAuction();
     await placeBid(wallets.alice, 100n);
     await warpTime(BIDDING_DURATION + 1n);
 
@@ -44,7 +46,8 @@ describe("ConfidentialSealedBidAuction reveal + settle", () => {
   });
 
   it("reverts reveal with no bids", async () => {
-    const { wallets, auction, warpTime } = await boot();
+    const { wallets, getAuction, warpTime } = await boot();
+    const auction = await getAuction();
     await warpTime(BIDDING_DURATION + 1n);
 
     await assertRevertsWith(
@@ -55,8 +58,9 @@ describe("ConfidentialSealedBidAuction reveal + settle", () => {
 
   it("rejects a second reveal and a second settle", async () => {
     const {
-      wallets, auction, warpTime, placeBid, revealAndSettle, claimFlag
+      wallets, getAuction, warpTime, placeBid, revealAndSettle, claimFlag
     } = await boot();
+    const auction = await getAuction();
     await placeBid(wallets.alice, 100n);
     await warpTime(BIDDING_DURATION + 1n);
     const price = await revealAndSettle(wallets.deployer);

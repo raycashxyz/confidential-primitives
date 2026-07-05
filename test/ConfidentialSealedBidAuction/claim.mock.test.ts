@@ -16,8 +16,9 @@ const boot = useAuctionSuite();
 describe("ConfidentialSealedBidAuction claim", () => {
   it("lets the top bidder prove winnership and rejects a loser's claim", async () => {
     const {
-      wallets, auction, send, warpTime, placeBid, revealAndSettle, claimFlag
+      wallets, getAuction, send, warpTime, placeBid, revealAndSettle, claimFlag
     } = await boot();
+    const auction = await getAuction();
 
     await placeBid(wallets.alice, 100n);
     await placeBid(wallets.bob, 250n); // winner
@@ -46,8 +47,9 @@ describe("ConfidentialSealedBidAuction claim", () => {
 
   it("resolves a tie first-come: the first tied claimant to finalize wins", async () => {
     const {
-      wallets, auction, send, warpTime, placeBid, revealAndSettle, claimFlag
+      wallets, getAuction, send, warpTime, placeBid, revealAndSettle, claimFlag
     } = await boot();
+    const auction = await getAuction();
 
     await placeBid(wallets.alice, 250n); // tied top
     await placeBid(wallets.bob, 250n); // tied top

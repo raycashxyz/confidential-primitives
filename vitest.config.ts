@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
@@ -6,8 +6,9 @@ export default defineConfig({
     include: ["test/**/*.mock.test.ts"],
     // The 4-way finalize gas benchmark boots ~6 environments and runs hundreds of FHE txs
     // (~2.5min). It's a benchmark, not a correctness gate — keep it out of `pnpm test` and
-    // run it on demand via `pnpm test:bench`.
-    exclude: ["test/gas-estimate-batched.mock.test.ts", "**/node_modules/**"],
+    // run it on demand via `pnpm test:bench`. Extend (don't replace) vitest's default
+    // excludes so node_modules/dist/cache globs stay ignored.
+    exclude: [...configDefaults.exclude, "test/gas-estimate-batched.mock.test.ts"],
     testTimeout: 120_000,
     hookTimeout: 120_000,
     // Run test files in parallel across worker processes (default pool: forks). Each file

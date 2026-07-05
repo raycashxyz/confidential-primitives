@@ -40,11 +40,12 @@ export async function createHarness (
     // tevm (1.0.0-next.149) quirk: loadState rolls back the *queryable* nonce
     // (eth_getTransactionCount) but not the tx-validator's, so the next tx would be rejected
     // NonceTooLow. Re-sync every prefunded account's nonce to the restored value; setAccount
-    // writes through to the state manager the validator reads.
-    for (const w of env.allWallets) {
+    // writes through to the state manager the validator reads. Each account is independent,
+    // so resync them concurrently.
+    await Promise.all(env.allWallets.map(async (w) => {
       const nonce = await env.publicClient.getTransactionCount({ address: w.account.address });
       await env.cheatcodes.setAccount({ address: w.account.address, nonce: BigInt(nonce) });
-    }
+    }));
   };
 
   return {
