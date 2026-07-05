@@ -41,6 +41,8 @@ export interface TestEnvironment {
   warpTo: (timestamp: bigint) => Promise<void>;
   /** Prefunded wallet client at `index` (0..4 alias deployer..signer) for suites needing extras. */
   walletAt: (index: number) => WalletWithAccount;
+  /** Every prefunded wallet (all tevm accounts) — used by the snapshot harness to resync nonces. */
+  allWallets: WalletWithAccount[];
   fhevm: FhevmTevmRuntime["fhevm"];
 }
 
@@ -103,6 +105,7 @@ export async function createTestEnvironment (): Promise<TestEnvironment> {
     warpTime,
     warpTo,
     walletAt,
+    allWallets: runtime.accounts.map(walletFor),
     fhevm: runtime.fhevm,
   };
 }

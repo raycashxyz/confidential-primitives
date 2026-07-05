@@ -29,6 +29,7 @@
     "compile": "hardhat compile",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:bench": "vitest run --config vitest.bench.config.ts",
     "clean": "hardhat clean",
     "changeset": "changeset",
     "version-packages": "changeset version",
