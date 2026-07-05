@@ -28,7 +28,14 @@ async function boot () {
   } = env;
   const { deployer } = wallets;
 
-  const send = async (p: Promise<`0x${string}`>) => publicClient.waitForTransactionReceipt({ hash: await p });
+  // FHE calls (fheTxOpts) carry an explicit gas limit, so viem skips simulation and an
+  // on-chain revert lands as a receipt instead of a throw — check status so a failed
+  // deposit/finalize surfaces immediately rather than corrupting later assertions.
+  const send = async (p: Promise<`0x${string}`>) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: await p });
+    if (receipt.status !== "success") throw new Error(`tx reverted: ${receipt.transactionHash}`);
+    return receipt;
+  };
 
   const { contract: underlying } = await getOrDeployMockUSDC({
     walletClient: deployer,

@@ -18,7 +18,8 @@ interface EncryptedInput {
 
 interface Eip712 {
   domain: TypedDataDomain;
-  types: Record<string, { name: string; type: string }[]>;
+  // readonly: the relayer-sdk (via fhevm-tevm-mocks >= 0.3) returns frozen tuples here.
+  types: Record<string, readonly { readonly name: string; readonly type: string }[]>;
   primaryType: string;
   message: Record<string, unknown> & {
     startTimestamp: string | number | bigint;

@@ -48,6 +48,8 @@ Solidity consumers import the sources directly:
 
 ```solidity
 import {BatchedAsyncWrapper} from "@raycashxyz/confidential-primitives/contracts/wrappers/BatchedAsyncWrapper.sol";
+import {BatchedAsyncWrapperV2} from "@raycashxyz/confidential-primitives/contracts/wrappers/BatchedAsyncWrapperV2.sol";
+import {ConfidentialSealedBidAuction} from "@raycashxyz/confidential-primitives/contracts/auctions/ConfidentialSealedBidAuction.sol";
 ```
 
 ## Develop
