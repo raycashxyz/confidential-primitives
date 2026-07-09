@@ -1,19 +1,19 @@
 /**
- * BatchedAsyncWrapperV2 — multi-batch finalize + the scale headline: the tree reduction
- * clears a full batch of 32 that the serial-sum designs cannot. Isolated in its own file
+ * BatchedAsyncWrapper — multi-batch finalize + the scale headline: the tree reduction
+ * clears a full batch of 32. Isolated in its own file
  * (the 32-deposit case is the slowest test in the suite) so it runs on its own worker.
  */
 import {
   describe, it, expect
 } from "vitest";
 
-import { useBatchedV2Suite, AMOUNT } from "./setup/suite";
+import { useBatchedSuite, AMOUNT } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
 import { assertRevertsWith } from "../setup/asserts";
 
-const boot = useBatchedV2Suite();
+const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapperV2 finalizeWrap — multi-batch & scale", () => {
+describe("BatchedAsyncWrapper finalizeWrap — multi-batch & scale", () => {
   it("finalizes multiple closed batches in one call", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
@@ -49,10 +49,9 @@ describe("BatchedAsyncWrapperV2 finalizeWrap — multi-batch & scale", () => {
     );
   });
 
-  // The headline: the serial-sum designs revert on the FHEVM 5M HCU DEPTH cap at ~29
-  // deposits (see the gas benchmark's extended rows); the tree reduction
-  // (depth ~log2 N) clears a full batch of 32 in one call.
-  it("finalizes a batch of 32 that the serial-sum designs cannot (tree reduction)", async () => {
+  // The headline: tree reduction keeps the add dependency depth logarithmic, so a
+  // full 32-slot batch clears in one call.
+  it("finalizes a batch of 32 with tree reduction", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
     } = await boot();

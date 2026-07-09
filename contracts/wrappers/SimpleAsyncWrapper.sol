@@ -1,93 +1,99 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64, externalEuint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
-import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC7984AsyncWrapper} from "./ERC7984AsyncWrapper.sol";
+import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
+import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
+import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
 
 /**
  * @title SimpleAsyncWrapper
- * @notice Minimal concrete {ERC7984AsyncWrapper}: deposits are pulled directly via
- *         IERC20.transferFrom — the depositor approves the wrapper first, then anyone
- *         can pull `amount` from them into a deposit.
+ * @notice Minimal async privacy layer for an existing ERC7984ERC20Wrapper.
  *
- *         No AccessControl, hooks, CREATE2 depositors, withdrawal escape hatch, or
- *         `_update` override — finalizeWrap / initUnwrap delegate straight to the base
- *         internals. It finalizes with the base's "rewrite" strategy (each matched
- *         deposit's encrypted amount is zeroed in storage), serving as the reference
- *         point for comparing finalize gas against {BatchedAsyncWrapper}.
+ *         Deposits are finalized by caller-selected ids. This gives maximum
+ *         flexibility, but the caller controls the decoy set quality; `minDecoys`
+ *         only enforces a lower bound.
  */
 contract SimpleAsyncWrapper is ERC7984AsyncWrapper {
-    using SafeERC20 for IERC20;
-
     uint256 public immutable minDecoys;
 
-    constructor(
-        IERC20 _underlying,
-        uint256 _minDecoys
-    )
-        ERC7984AsyncWrapper(_underlying, "Simple Confidential Wrapped", "scWRAP")
+    struct Deposit {
+        address depositor;
+        uint256 originalAmount;
+        euint64 amount;
+        eaddress recipient;
+        bytes data;
+    }
+
+    event WrapInitiated(
+        uint256 indexed depositIndex,
+        address indexed depositor,
+        uint256 amount,
+        bytes32 encryptedRecipientHandle,
+        bytes data
+    );
+    event WrapFinalized(address indexed recipient, bytes32 amount, uint256[] ids);
+
+    Deposit[] public deposits;
+
+    constructor(IERC7984ERC20Wrapper confidentialWrapper_, uint256 _minDecoys)
+        ERC7984AsyncWrapper(confidentialWrapper_)
     {
         if (_minDecoys == 0) revert InvalidMinDecoys();
         minDecoys = _minDecoys;
     }
 
-    // -----------------------------------------------------------------------
-    // initWrap: pull tokens via transferFrom + record deposit
-    // -----------------------------------------------------------------------
+    function getDepositsLength() external view override returns (uint256) {
+        return deposits.length;
+    }
 
-    /**
-     * @notice Record a deposit by pulling `amount` underlying from `from`.
-     *         `from` must have approved this wrapper for at least `amount`.
-     * @param from Depositor to pull tokens from (also recorded as the deposit owner).
-     * @param encryptedRecipient FHE-encrypted recipient address.
-     * @param inputProof Proof binding the encrypted recipient to (this, msg.sender).
-     * @param amount Cleartext amount of underlying to deposit.
-     * @return depositIndex Index of the newly recorded deposit.
-     */
     function initWrap(
-        address from,
+        uint256 amount,
         externalEaddress encryptedRecipient,
-        bytes calldata inputProof,
-        uint256 amount
-    ) external returns (uint256 depositIndex) {
-        if (amount == 0) revert ZeroAmount();
-        eaddress verified = FHE.fromExternal(encryptedRecipient, inputProof);
-        IERC20(address(underlying())).safeTransferFrom(from, address(this), amount);
-        depositIndex = _initWrap(from, amount, verified, "");
+        bytes calldata inputProof
+    ) external override nonReentrant returns (uint256 depositIndex) {
+        eaddress verifiedRecipient = FHE.fromExternal(encryptedRecipient, inputProof);
+        (uint256 wrappedUnderlying, euint64 encryptedAmount) = _wrapIntoEscrow(msg.sender, amount);
+        FHE.allowThis(verifiedRecipient);
+
+        deposits.push(
+            Deposit({
+                depositor: msg.sender,
+                originalAmount: wrappedUnderlying,
+                amount: encryptedAmount,
+                recipient: verifiedRecipient,
+                data: ""
+            })
+        );
+
+        depositIndex = deposits.length - 1;
+        emit WrapInitiated(depositIndex, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient), "");
     }
 
-    // -----------------------------------------------------------------------
-    // Implement abstract externals
-    // -----------------------------------------------------------------------
+    function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
+        if (ids.length < minDecoys) revert TooFewDecoys();
+        if (recipient == address(0)) revert ZeroAddress();
 
-    function finalizeWrap(
-        uint256[] calldata ids,
-        address recipient
-    ) external override {
-        _finalizeWrap(ids, recipient, minDecoys);
-    }
+        eaddress encryptedRecipient = FHE.asEaddress(recipient);
+        euint64[] memory payouts = new euint64[](ids.length);
 
-    function initUnwrap(
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof,
-        address destination
-    ) external override {
-        if (destination == address(0)) revert ZeroAddress();
-        euint64 amount = FHE.fromExternal(encryptedAmount, inputProof);
-        FHE.allowThis(amount);
-        _unwrap(msg.sender, destination, amount);
-    }
+        uint256 prevIndex;
+        for (uint256 k = 0; k < ids.length; k++) {
+            uint256 i = ids[k];
+            if (i >= deposits.length) revert InvalidId();
+            if (k > 0 && i <= prevIndex) revert DuplicateId();
+            prevIndex = i;
 
-    function initUnwrap(
-        uint64 compressedAmount,
-        address destination
-    ) external override {
-        if (destination == address(0)) revert ZeroAddress();
-        if (compressedAmount == 0) revert ZeroAmount();
-        euint64 amount = FHE.asEuint64(compressedAmount);
-        FHE.allowThis(amount);
-        _unwrap(msg.sender, destination, amount);
+            Deposit storage d = deposits[i];
+            ebool isMatch = FHE.eq(d.recipient, encryptedRecipient);
+            payouts[k] = FHE.select(isMatch, d.amount, E_ZERO);
+
+            d.amount = FHE.select(isMatch, E_ZERO, d.amount);
+            FHE.allowThis(d.amount);
+        }
+
+        euint64 total = _sumTree(payouts);
+        euint64 transferred = _transferWrapped(recipient, total);
+
+        emit WrapFinalized(recipient, FHE.toBytes32(transferred), ids);
     }
 }

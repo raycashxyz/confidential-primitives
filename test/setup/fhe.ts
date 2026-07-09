@@ -102,7 +102,7 @@ export async function encryptRecipient (
 /**
  * Public-decrypt a handle marked `FHE.makePubliclyDecryptable` and return the cleartext plus the
  * KMS decryption proof — the pair on-chain `FHE.checkSignatures` verifiers expect (e.g. the
- * wrappers' `finalizeUnwrap`, the auction's `settle`/`finalizeClaim`).
+ * wrappers' `finalizeUnwrap`).
  */
 export async function publicDecryptEuint (
   instance: FhevmInstance,

@@ -1,65 +1,83 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64, externalEuint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
-import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
-import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
-import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ERC7984/extensions/ERC7984ERC20Wrapper.sol";
-import {IERC7984AsyncWrapper} from "./IERC7984AsyncWrapper.sol";
+import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
+import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
+import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
 
 /**
  * @title BatchedAsyncWrapper
- * @notice Batched-bitmap variant of SimpleAsyncWrapper that eliminates the
- *         per-deposit SSTORE in finalizeWrap.
+ * @notice Batch-based async wrapper with a cleartext per-(batch, recipient)
+ *         nullifier and a tree-reduced payout sum.
  *
- *         SimpleAsyncWrapper (ERC7984AsyncWrapper._finalizeWrap) rewrites each
- *         deposit's encrypted `amount` slot every cycle (`d.amount = select(...)`)
- *         to mark it consumed — one SSTORE of a fresh ciphertext handle per
- *         deposit, per finalize.
+ *         Same privacy model as the other wrappers: a deposit is SENDER-TRANSPARENT
+ *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
+ *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
+ *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
  *
- *         This contract instead keeps deposits write-once and tracks consumption
- *         in a single per-batch confidential bitmap (`batchFinalized[batchId]`):
- *         bit j == 1 means slot j of the batch has already been paid out. A
- *         finalize over a whole batch therefore writes ONE storage slot (the
- *         bitmap), not N.
+ *         The recipient is already public at finalize time
+ *            (it is an address argument, emitted in {WrapFinalized}), so a plain
+ *            `finalized[batchId][recipient]` bool leaks nothing the call does not
+ *            already reveal.
  *
- *         Deposits land in fixed-size batches of `maxBatchDeposits`. finalizeWrap
- *         takes strictly-increasing batch ids and scans each entire batch, so the
- *         decoy set is the whole batch — no caller-supplied indices or decoys. The
- *         depositor learns their batch from the `WrapInitiated` event.
+ *         The payout sum is tree-reduced via {_sumTree}. Pairwise reduction keeps the
+ *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
+ *         FHEVM total-HCU budget rather than a long serial add chain.
  *
- *         Bitmap is a euint64, so `maxBatchDeposits` is capped at 64: bit
- *         `1 << j` must fit, otherwise slots >= 64 would never be marked consumed
- *         and could be withdrawn repeatedly.
+ *         Tradeoff: the nullifier is all-or-nothing per (batch, recipient), so a batch
+ *         must be CLOSED (full, or timeout-sealed via {sealBatch}) before finalizing —
+ *         this freezes each recipient's matched set (no later top-ups into a finalized
+ *         batch). Tail batches can close only after `sealDelay`: either explicitly via
+ *         {sealBatch} or automatically on the first {finalizeWrap} attempt, so funds
+ *         cannot stay stuck without allowing premature one-deposit batches.
  *
- *         Like SimpleAsyncWrapper, deposits are pulled via IERC20.transferFrom
- *         (the depositor approves first). Unwrap uses the inherited OZ
- *         ERC7984ERC20Wrapper lifecycle (`unwrap` + `finalizeUnwrap`).
+ *         Recipient handshake (how the depositor never learns the recipient): the
+ *         RECIPIENT encrypts their own address off-chain with the input proof bound to
+ *         the DEPOSITOR as userAddress, and hands (handle, proof) to the depositor,
+ *         who submits it via {initWrap}. The recipient recognises their deposit by
+ *         watching for their handle in {WrapInitiated}.
+ *
+ *         Like the other wrappers: deposits are wrapped immediately into confidential
+ *         balance owned by this contract, then transferred to recipients on finalize.
  */
-contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC7984ERC20Wrapper {
-    using SafeERC20 for IERC20;
+contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
+    /// @dev Hard cap on batch size, set so {finalizeWrap} over ONE batch is PROVABLY
+    ///      completable — an unfinalizable batch would lock funds. finalize does a
+    ///      fixed amount of FHE work per slot (`eq` + `select` + tree `add`), so its
+    ///      binding limit is the FHEVM 20M TOTAL-HCU/tx budget: measured on the FHEVM
+    ///      coprocessor mocks (which meter HCU via the HCULimit host contract),
+    ///      56 slots fits and >=60 reverts; the analytic op-cost model agrees (~60).
+    ///      48 leaves ~15-20% headroom.
+    ///      NOTE the budget applies to TOTAL SLOTS SCANNED PER CALL: near the cap,
+    ///      finalize one batch per call; multi-batch calls suit smaller batch sizes.
+    uint256 private constant MAX_BATCH_LIMIT = 48;
 
-    /// @dev Max batch size — bounded by the 64 bits of the bitmap.
-    uint256 private constant MAX_BATCH_LIMIT = 64;
-
-    euint64 public immutable E_ZERO;
     uint256 public immutable maxBatchDeposits;
 
-    /// @notice Total number of deposits recorded across all batches.
+    /// @notice Seconds after a batch's last deposit before anyone may {sealBatch} it.
+    uint256 public immutable sealDelay;
+
+    /// @notice Batch currently accepting deposits.
+    uint256 public currentBatchId;
+
+    /// @notice Total deposits recorded across all batches.
     uint256 public totalDeposits;
 
     /// @notice Global slot index (batchId * maxBatchDeposits + batchIndex) => deposit.
     mapping(uint256 slot => Deposit) public deposits;
 
-    /// @notice batchId => confidential bitmap of already-finalized slots.
-    mapping(uint256 batchId => euint64) public batchFinalized;
+    mapping(uint256 batchId => Batch) private _batches;
+
+    struct Batch {
+        uint256 fillCount;
+        bool closed;
+        uint64 lastDepositAt;
+        mapping(address recipient => bool) finalized;
+    }
 
     struct Deposit {
         address depositor;
-        uint256 amount;
+        uint256 amount; // cleartext — the transparent side of the mix
         euint64 eAmount;
         eaddress eRecipient;
     }
@@ -72,257 +90,192 @@ contract BatchedAsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ERC798
         bytes32 eRecipient
     );
     event WrapFinalized(address indexed recipient, bytes32 amount, uint256[] ids);
+    event BatchSealed(uint256 indexed batchId, uint256 filled);
 
-    // ZeroAmount, ZeroAddress, DuplicateId, ExternalWrapNotSupported are inherited from IERC7984AsyncWrapper.
     error InvalidBatchSize();
-    error BatchNotComplete();
+    error BatchNotClosed();
+    error BatchAlreadyClosed();
+    error NotCurrentBatch();
+    error NothingToSeal();
+    error SealDelayNotElapsed();
+    error SealDelayTooShort();
+    error AlreadyFinalized();
 
     constructor(
         uint256 _maxBatchDeposits,
-        IERC20 _underlying,
-        string memory name_,
-        string memory symbol_
+        uint256 _sealDelay,
+        IERC7984ERC20Wrapper confidentialWrapper_
     )
-        ERC7984(name_, symbol_, "")
-        ERC7984ERC20Wrapper(_underlying)
+        ERC7984AsyncWrapper(confidentialWrapper_)
     {
-        if (address(_underlying) == address(0)) revert ZeroAddress();
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
+        // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could
+        // seal every batch at fill count 1, collapsing the anonymity set to a single
+        // deposit. Zero is rejected; choosing a meaningfully large delay (hours) is
+        // still the deployer's responsibility, like maxBatchDeposits itself.
+        if (_sealDelay == 0) revert SealDelayTooShort();
         maxBatchDeposits = _maxBatchDeposits;
-        E_ZERO = FHE.asEuint64(0);
-        FHE.allowThis(E_ZERO);
+        sealDelay = _sealDelay;
     }
 
-    // -----------------------------------------------------------------------
-    // Batch arithmetic
-    // -----------------------------------------------------------------------
-
-    /// @notice Batch currently being filled.
-    function currentBatchId() public view returns (uint256) {
-        return totalDeposits / maxBatchDeposits;
-    }
-
-    function _batchIndex() private view returns (uint256) {
-        return totalDeposits % maxBatchDeposits;
-    }
-
-    function _batchStartIndex(uint256 batchId) private view returns (uint256) {
-        return batchId * maxBatchDeposits;
-    }
-
-    // -----------------------------------------------------------------------
-    // Disabled OZ wrap paths — deposits must go through initWrap
-    // -----------------------------------------------------------------------
-
-    function wrap(address, uint256) public pure override returns (euint64) {
-        revert ExternalWrapNotSupported();
-    }
-
-    function onTransferReceived(address, address, uint256, bytes calldata) public pure override returns (bytes4) {
-        revert ExternalWrapNotSupported();
-    }
-
-    // -----------------------------------------------------------------------
-    // IERC7984AsyncWrapper: deposit count + unwrap lifecycle
-    // -----------------------------------------------------------------------
-
-    /// @inheritdoc IERC7984AsyncWrapper
     function getDepositsLength() external view override returns (uint256) {
         return totalDeposits;
     }
 
-    /// @inheritdoc IERC7984AsyncWrapper
-    function initUnwrap(
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof,
-        address destination
-    ) external override {
-        if (destination == address(0)) revert ZeroAddress();
-        euint64 amount = FHE.fromExternal(encryptedAmount, inputProof);
-        FHE.allowThis(amount);
-        _unwrap(msg.sender, destination, amount);
+    function batchFillCount(uint256 batchId) public view returns (uint256) {
+        return _batches[batchId].fillCount;
     }
 
-    /// @inheritdoc IERC7984AsyncWrapper
-    function initUnwrap(uint64 compressedAmount, address destination) external override {
-        if (destination == address(0)) revert ZeroAddress();
-        if (compressedAmount == 0) revert ZeroAmount();
-        euint64 amount = FHE.asEuint64(compressedAmount);
-        FHE.allowThis(amount);
-        _unwrap(msg.sender, destination, amount);
+    function batchClosed(uint256 batchId) public view returns (bool) {
+        return _batches[batchId].closed;
+    }
+
+    function batchLastDepositAt(uint256 batchId) public view returns (uint64) {
+        return _batches[batchId].lastDepositAt;
+    }
+
+    function finalized(uint256 batchId, address recipient) public view returns (bool) {
+        return _batches[batchId].finalized[recipient];
     }
 
     // -----------------------------------------------------------------------
-    // initWrap: pull tokens via transferFrom + record deposit (write-once)
+    // initWrap: record a write-once deposit, then pull tokens (CEI)
     // -----------------------------------------------------------------------
 
     /**
      * @notice Record a deposit into the current batch by pulling `amount` underlying
-     *         from `depositor` (who must have approved this wrapper).
+     *         from `msg.sender` (who must have approved this wrapper). `inputProof`
+     *         must bind `eRecipient` to `(this, msg.sender)`.
+     *
+     *         Non-multiple amounts are rounded down through the configured wrapper's
+     *         rate. The recorded amount is the underlying actually wrapped into escrow.
      * @return slot Global slot index of the new deposit.
      */
     function initWrap(
-        address depositor,
         uint256 amount,
         externalEaddress eRecipient,
         bytes calldata inputProof
-    ) external returns (uint256 slot) {
-        if (amount == 0) revert ZeroAmount();
-        uint64 compressed = SafeCast.toUint64(amount / rate());
-        if (compressed == 0) revert ZeroAmount();
-
-        uint256 batchId = currentBatchId();
-        uint256 batchIndex = _batchIndex();
+    ) external override nonReentrant returns (uint256 slot) {
+        uint256 batchId = currentBatchId;
+        Batch storage batch = _batches[batchId];
+        if (batch.closed || batch.fillCount == maxBatchDeposits) {
+            if (!batch.closed) _closeBatchUnchecked(batchId, batch);
+            batchId = currentBatchId;
+            batch = _batches[batchId];
+        }
+        uint256 batchIndex = batch.fillCount;
 
         eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
-        euint64 eAmount = FHE.asEuint64(compressed);
+        (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         FHE.allowThis(verifiedRecipient);
-        FHE.allowThis(eAmount);
 
-        // Initialise the per-batch bitmap once, on the first deposit of the batch.
-        if (batchIndex == 0) {
-            batchFinalized[batchId] = E_ZERO;
-        }
-
-        slot = _batchStartIndex(batchId) + batchIndex;
+        slot = batchId * maxBatchDeposits + batchIndex;
         deposits[slot] = Deposit({
-            depositor: depositor,
-            amount: amount,
+            depositor: msg.sender,
+            amount: wrappedUnderlying,
             eAmount: eAmount,
             eRecipient: verifiedRecipient
         });
+
+        batch.fillCount = batchIndex + 1;
+        batch.lastDepositAt = uint64(block.timestamp);
         totalDeposits += 1;
 
-        emit WrapInitiated(batchId, slot, depositor, amount, FHE.toBytes32(verifiedRecipient));
+        if (batch.fillCount == maxBatchDeposits) _closeBatchUnchecked(batchId, batch);
 
-        // Interactions last (Checks-Effects-Interactions): pull tokens only after the deposit is
-        // recorded, so a reentrant initWrap (via a token transfer hook) cannot observe the same
-        // totalDeposits, recompute the same `slot`, and have its record overwritten by this call.
-        IERC20(address(underlying())).safeTransferFrom(depositor, address(this), amount);
+        emit WrapInitiated(batchId, slot, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
     }
 
     // -----------------------------------------------------------------------
-    // finalizeWrap: scan whole batch, pay unconsumed matches, flip their bits
+    // sealBatch: liveness escape hatch for a tail batch that never fills
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Per-slot finalize — reference implementation kept for the gas benchmark.
-     *         Prefer {finalizeWrap}, which produces the same result with the bitwise work bulked.
-     *         Mints the sum of every not-yet-finalized deposit in `batchId` matching `recipient`
-     *         and marks those slots consumed. Permissionless and replay-safe.
+     * @notice Close the current, still-open batch early so its deposits can be
+     *         finalized. Permissionless, but only after `sealDelay` since the last
+     *         deposit. finalizeWrap performs the same close automatically when it
+     *         first sees an eligible open batch.
      */
-    function finalizeWrapPerSlot(uint256 batchId, address recipient) external {
-        if (recipient == address(0)) revert ZeroAddress();
-        uint256 startIndex = _batchStartIndex(batchId);
-        uint256 endIndex = startIndex + maxBatchDeposits;
-        // Complete-batch-only, exactly like the bulk path. A partial-batch finalize here would
-        // commit only some of a recipient's slots; a later bulk {finalizeWrap} over the completed
-        // batch re-sums ALL their matches and would re-pay the already-finalized ones.
-        if (totalDeposits < endIndex) revert BatchNotComplete();
+    function sealBatch(uint256 batchId) external {
+        if (batchId != currentBatchId) revert NotCurrentBatch();
+        Batch storage batch = _batches[batchId];
+        if (batch.closed) revert BatchAlreadyClosed();
+        uint256 filled = batch.fillCount;
+        if (filled == 0) revert NothingToSeal();
+        if (!_sealDelayElapsed(batch)) revert SealDelayNotElapsed();
 
-        // Snapshot the committed bitmap once. A slot is "already finalized" only if a
-        // PRIOR finalize set its bit — never within this call, since each slot is visited
-        // exactly once. So the per-slot check reads this constant snapshot, not the
-        // running value. Keeping `committed` constant stops the FHE dependency chain from
-        // deepening per iteration (FHEVM caps HCU depth per tx at 5M); new bits accumulate
-        // in a separate `newBits` and are OR'd in once after the loop.
-        euint64 committed = batchFinalized[batchId];
-        euint64 sum = E_ZERO;
-        euint64 newBits = E_ZERO;
-
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            uint64 bitMask = uint64(1) << uint8(i - startIndex);
-            Deposit storage d = deposits[i];
-
-            ebool isMatch = FHE.eq(d.eRecipient, recipient);
-            // Bit set in the committed map => this slot was already paid out earlier.
-            ebool alreadyFinalized = FHE.ne(FHE.and(committed, bitMask), uint64(0));
-
-            // Pay only on a fresh match.
-            euint64 payout = FHE.select(alreadyFinalized, E_ZERO, FHE.select(isMatch, d.eAmount, E_ZERO));
-            sum = FHE.add(sum, payout);
-
-            // Record bit j on a match (OR into committed below is idempotent for replays).
-            newBits = FHE.select(isMatch, FHE.or(newBits, bitMask), newBits);
-        }
-
-        euint64 bitmap = FHE.or(committed, newBits);
-        FHE.allowThis(bitmap);
-        batchFinalized[batchId] = bitmap;
-
-        uint256[] memory singleId = new uint256[](1);
-        singleId[0] = batchId;
-        emit WrapFinalized(recipient, FHE.toBytes32(sum), singleId);
-
-        _mint(recipient, sum);
+        _closeBatchUnchecked(batchId, batch);
     }
 
     // -----------------------------------------------------------------------
-    // finalizeWrap: bulk bitwise nullifier, over one or more complete batches.
+    // finalizeWrap: scan closed batches, tree-reduce the recipient's matches
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Finalize the given complete batches for `recipient`, minting the homomorphic sum
-     *         of their not-yet-claimed matching deposits in a single mint.
+     * @notice Transfer the encrypted sum of every deposit in the given CLOSED batches whose
+     *         encrypted recipient equals `recipient`. Permissionless; replay-safe via the
+     *         cleartext nullifier (a second call for the same (batch, recipient) reverts).
      *
-     *         The bitwise nullifier work is hoisted out of the per-slot loop into ONE bulk update
-     *         per batch — cheaper EVM gas than the rewrite strategy (the extra cost is FHE HCU,
-     *         not paid on-chain). See {finalizeWrapPerSlot} for the naive per-slot reference.
-     *
-     *         Replay-safe across calls via each batch's bitmap; within a call the bulk gate is
-     *         all-or-nothing, so each id MUST be a COMPLETE batch (no later top-ups). A single
-     *         batch is just a length-1 array — matching the {IERC7984AsyncWrapper} signature.
+     *         HCU note: the FHEVM per-tx budget bounds TOTAL SLOTS SCANNED PER CALL
+     *         (~56 measured). With `maxBatchDeposits` near the 48 cap, finalize one
+     *         batch per call; multi-batch calls suit smaller batch sizes.
      * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
-     * @param recipient Address to match deposits against and mint the total to.
+     * @param recipient Address to match deposits against and transfer the total to.
      */
-    function finalizeWrap(uint256[] calldata ids, address recipient) external override {
+    function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
 
-        euint64 total = E_ZERO;
+        // Count scanned slots across batches to size the payout array.
+        uint256 totalSlots;
         uint256 prev;
         for (uint256 k = 0; k < ids.length; k++) {
             uint256 batchId = ids[k];
             if (k > 0 && batchId <= prev) revert DuplicateId(); // strictly increasing, no dupes
             prev = batchId;
-            total = FHE.add(total, _finalizeBatchBulk(batchId, recipient));
+            Batch storage batch = _batches[batchId];
+            _ensureBatchClosedForFinalize(batchId, batch);
+            if (batch.finalized[recipient]) revert AlreadyFinalized();
+            batch.finalized[recipient] = true;
+            totalSlots += batch.fillCount;
         }
 
-        emit WrapFinalized(recipient, FHE.toBytes32(total), ids);
-        _mint(recipient, total);
+        // Per-slot payouts are independent (depth ~2 each); only the reduction deepens
+        // the FHE dependency chain, and the tree keeps that at ceil(log2 N) adds.
+        euint64[] memory payouts = new euint64[](totalSlots);
+        uint256 p;
+        for (uint256 k = 0; k < ids.length; k++) {
+            uint256 startIndex = ids[k] * maxBatchDeposits;
+            uint256 count = _batches[ids[k]].fillCount;
+            for (uint256 j = 0; j < count; j++) {
+                Deposit storage d = deposits[startIndex + j];
+                ebool isMatch = FHE.eq(d.eRecipient, recipient);
+                payouts[p++] = FHE.select(isMatch, d.eAmount, E_ZERO);
+            }
+        }
+
+        euint64 total = _sumTree(payouts);
+        euint64 transferred = _transferWrapped(recipient, total);
+
+        emit WrapFinalized(recipient, FHE.toBytes32(transferred), ids);
     }
 
-    /**
-     * @dev Bulk-finalize ONE complete batch for `recipient`: scan its slots, mark matched slots
-     *      consumed in the batch bitmap (a single bulk write), and return the fresh payout.
-     *      Reverts {BatchNotComplete} if the batch is not fully filled.
-     */
-    function _finalizeBatchBulk(uint256 batchId, address recipient) private returns (euint64) {
-        uint256 startIndex = _batchStartIndex(batchId);
-        uint256 endIndex = startIndex + maxBatchDeposits;
-        if (totalDeposits < endIndex) revert BatchNotComplete();
-
-        euint64 committed = batchFinalized[batchId];
-        euint64 matchMask = E_ZERO; // packed: bit j set iff slot j matches `recipient`
-        euint64 sum = E_ZERO;       // sum of ALL of recipient's matches (gated by match only)
-
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            uint64 bitMask = uint64(1) << uint8(i - startIndex);
-            Deposit storage d = deposits[i];
-
-            ebool isMatch = FHE.eq(d.eRecipient, recipient);
-            // Set bit j in the packed match vector on a match (scalar `or`, no trivial-encrypt).
-            matchMask = FHE.select(isMatch, FHE.or(matchMask, bitMask), matchMask);
-            sum = FHE.add(sum, FHE.select(isMatch, d.eAmount, E_ZERO));
+    function _ensureBatchClosedForFinalize(uint256 batchId, Batch storage batch) internal {
+        if (batch.closed) return;
+        if (batchId != currentBatchId || batch.fillCount == 0 || !_sealDelayElapsed(batch)) {
+            revert BatchNotClosed();
         }
 
-        // Bulk nullifier work — one pass on the whole word, not per slot.
-        euint64 freshMask = FHE.and(matchMask, FHE.not(committed)); // recipient's not-yet-claimed bits
-        ebool hasFresh = FHE.ne(freshMask, uint64(0));              // anything new to pay?
-        euint64 payout = FHE.select(hasFresh, sum, E_ZERO);         // all-or-nothing replay gate
-        euint64 bitmap = FHE.or(committed, matchMask);              // mark recipient's slots consumed
+        _closeBatchUnchecked(batchId, batch);
+    }
 
-        FHE.allowThis(bitmap);
-        batchFinalized[batchId] = bitmap;
-        return payout;
+    function _sealDelayElapsed(Batch storage batch) internal view returns (bool) {
+        return block.timestamp >= uint256(batch.lastDepositAt) + sealDelay;
+    }
+
+    // Raw state transition: callers must first prove the batch is full or delay-eligible.
+    function _closeBatchUnchecked(uint256 batchId, Batch storage batch) internal {
+        batch.closed = true;
+        if (batchId == currentBatchId) currentBatchId = batchId + 1;
+        emit BatchSealed(batchId, batch.fillCount);
     }
 }
