@@ -9,3 +9,4 @@ Rearchitect the async wrappers as an escrow layer over an existing `ERC7984ERC20
 - **`BatchedAsyncWrapper`**: fixed-size batches with a cleartext `(batch, recipient)` nullifier, tree-reduced payout sum (`O(log N)` FHE depth), and a timeout-gated `sealBatch` liveness escape hatch. Batch cap 48 (bounded by the FHEVM total-HCU budget). This folds in the former `BatchedAsyncWrapperV2`.
 - **Removed** `BatchedAsyncWrapperV2` (folded into `BatchedAsyncWrapper`) and `ConfidentialSealedBidAuction`.
 - **Layout**: `IERC7984AsyncWrapper` moved to `contracts/interfaces`; the abstract base moved to `contracts/wrappers/base`. Added `contracts/mocks/MockERC7984ERC20Wrapper` (a concrete OZ wrapper) for tests and local deploys.
+- **Hardening**: `sealBatch` is `nonReentrant`, so a callback-capable underlying token can no longer seal the in-flight batch during `initWrap`'s token pull; the base constructor rejects a confidential wrapper whose `rate()` is zero (new `InvalidRate` error).

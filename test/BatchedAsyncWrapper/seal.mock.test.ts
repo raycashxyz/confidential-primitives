@@ -52,7 +52,9 @@ describe("BatchedAsyncWrapper sealBatch", () => {
     expect(await wrapper.read.batchClosed([0n])).toBe(false);
 
     await warpTime(SEAL_DELAY + 1n);
-    const sealReceipt = await send(wrapper.write.sealBatch([0n], txOpts(alice.account)));
+    // sealBatch is a state-changing write whose gas tevm under-estimates (the reentrancy-guard
+    // SSTOREs tip it into a silent OOG), so send with an explicit gas limit like the FHE calls.
+    const sealReceipt = await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
     const [sealed] = parseEventLogs({
       abi: wrapper.abi,
       logs: sealReceipt.logs,

@@ -32,6 +32,10 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
         address underlying_ = confidentialWrapper_.underlying();
         if (underlying_ == address(0)) revert ZeroAddress();
 
+        // rate() is the wrap divisor used in _wrapIntoEscrow (`amount % rate`); a zero rate
+        // would panic on every deposit. A valid OZ ERC7984ERC20Wrapper never returns 0.
+        if (confidentialWrapper_.rate() == 0) revert InvalidRate();
+
         CONFIDENTIAL_WRAPPER = confidentialWrapper_;
 
         E_ZERO = FHE.asEuint64(0);

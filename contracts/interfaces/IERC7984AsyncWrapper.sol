@@ -12,6 +12,8 @@ interface IERC7984AsyncWrapper {
     error ZeroAmount();
     /// @dev Used for invalid constructor/configuration addresses and finalize recipients.
     error ZeroAddress();
+    /// @dev Constructor configuration error: the confidential wrapper reports a zero wrap rate.
+    error InvalidRate();
     /// @dev Constructor configuration error: minDecoys must be non-zero.
     error InvalidMinDecoys();
     /// @dev Runtime finalize error: the selected decoy set is smaller than minDecoys.

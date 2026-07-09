@@ -139,7 +139,9 @@ contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
     }
 
     // -----------------------------------------------------------------------
-    // initWrap: record a write-once deposit, then pull tokens (CEI)
+    // initWrap: pull + wrap tokens into escrow, then record a write-once deposit.
+    // The token pull is an external call, so re-entry into any state-changing
+    // entrypoint (initWrap / finalizeWrap / sealBatch) is blocked by nonReentrant.
     // -----------------------------------------------------------------------
 
     /**
@@ -196,7 +198,7 @@ contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
      *         deposit. finalizeWrap performs the same close automatically when it
      *         first sees an eligible open batch.
      */
-    function sealBatch(uint256 batchId) external {
+    function sealBatch(uint256 batchId) external nonReentrant {
         if (batchId != currentBatchId) revert NotCurrentBatch();
         Batch storage batch = _batches[batchId];
         if (batch.closed) revert BatchAlreadyClosed();
