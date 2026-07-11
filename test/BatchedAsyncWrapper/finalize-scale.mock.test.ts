@@ -27,7 +27,7 @@ describe("BatchedAsyncWrapper finalizeWrap — multi-batch & scale", () => {
     expect(await wrapper.read.batchClosed([1n])).toBe(true);
 
     await send(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 4n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
   });
 
   it("rejects duplicate or non-increasing batch ids", async () => {
@@ -62,6 +62,6 @@ describe("BatchedAsyncWrapper finalizeWrap — multi-batch & scale", () => {
     expect(await wrapper.read.batchClosed([0n])).toBe(true);
 
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 32n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 32n);
   }, 300_000);
 });

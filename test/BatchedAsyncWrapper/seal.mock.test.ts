@@ -67,7 +67,7 @@ describe("BatchedAsyncWrapper sealBatch", () => {
     expect(await wrapper.read.currentBatchId()).toBe(1n);
 
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 2n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
   });
 
   it("auto-seals a stuck partial batch on the first finalize after the delay", async () => {
@@ -87,6 +87,6 @@ describe("BatchedAsyncWrapper sealBatch", () => {
 
     expect(await wrapper.read.batchClosed([0n])).toBe(true);
     expect(await wrapper.read.currentBatchId()).toBe(1n);
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 2n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
   });
 });

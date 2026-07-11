@@ -21,15 +21,13 @@ contract SimpleAsyncWrapper is ERC7984AsyncWrapper {
         uint256 originalAmount;
         euint64 amount;
         eaddress recipient;
-        bytes data;
     }
 
     event WrapInitiated(
         uint256 indexed depositIndex,
         address indexed depositor,
         uint256 amount,
-        bytes32 encryptedRecipientHandle,
-        bytes data
+        bytes32 encryptedRecipientHandle
     );
     event WrapFinalized(address indexed recipient, bytes32 amount, uint256[] ids);
 
@@ -60,13 +58,12 @@ contract SimpleAsyncWrapper is ERC7984AsyncWrapper {
                 depositor: msg.sender,
                 originalAmount: wrappedUnderlying,
                 amount: encryptedAmount,
-                recipient: verifiedRecipient,
-                data: ""
+                recipient: verifiedRecipient
             })
         );
 
         depositIndex = deposits.length - 1;
-        emit WrapInitiated(depositIndex, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient), "");
+        emit WrapInitiated(depositIndex, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
     }
 
     function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {

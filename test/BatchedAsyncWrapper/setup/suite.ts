@@ -102,8 +102,7 @@ export function useBatchedSuite () {
       ], fheTxOpts(depositor.account)));
     };
 
-    const decryptBalance = async (wrapper: WrapperContract, owner: WalletWithAccount): Promise<bigint> => {
-      void wrapper;
+    const decryptBalance = async (owner: WalletWithAccount): Promise<bigint> => {
       const handle = await confidentialWrapper.read.confidentialBalanceOf([owner.account.address]);
       if (handle === zeroHash) return 0n;
       return decryptEuint(fhevm.instance, handle, confidentialWrapper.address, owner);

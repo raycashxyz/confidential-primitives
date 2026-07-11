@@ -37,9 +37,9 @@ describe("BatchedAsyncWrapper finalizeWrap", () => {
     await fundAndApprove(wrapper, alice, 3n);
     for (let i = 0; i < 3; i++) await initWrap(wrapper, alice, alice.account.address);
 
-    expect(await decryptBalance(wrapper, alice)).toBe(0n); // before
+    expect(await decryptBalance(alice)).toBe(0n); // before
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 3n); // after
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 3n); // after
   });
 
   it("is replay-safe: a second finalize for the same (batch, recipient) reverts", async () => {
@@ -52,14 +52,14 @@ describe("BatchedAsyncWrapper finalizeWrap", () => {
     for (let i = 0; i < 2; i++) await initWrap(wrapper, alice, alice.account.address);
 
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-    const afterFirst = await decryptBalance(wrapper, alice);
+    const afterFirst = await decryptBalance(alice);
     expect(afterFirst).toBe(AMOUNT * 2n);
 
     await assertRevertsWith(
       wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
       "AlreadyFinalized",
     );
-    expect(await decryptBalance(wrapper, alice)).toBe(afterFirst); // unchanged
+    expect(await decryptBalance(alice)).toBe(afterFirst); // unchanged
   });
 
   it("pays each recipient only their own deposits from a shared batch", async () => {
@@ -80,7 +80,7 @@ describe("BatchedAsyncWrapper finalizeWrap", () => {
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
     await send(wrapper.write.finalizeWrap([[0n], bob.account.address], fheTxOpts(bob.account)));
 
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 3n);
-    expect(await decryptBalance(wrapper, bob)).toBe(AMOUNT * 1n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 3n);
+    expect(await decryptBalance(bob)).toBe(AMOUNT * 1n);
   });
 });

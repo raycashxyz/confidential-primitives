@@ -35,6 +35,9 @@ interface IERC7984AsyncWrapper {
     ) external returns (uint256 id);
 
     /// @notice Finalize pending deposits, transferring their homomorphic sum to `recipient`.
-    /// @param ids Finalization units: deposit indices for simple wrappers or batch ids for batched wrappers.
+    /// @param ids Finalization units: deposit indices for simple wrappers or batch ids for batched
+    ///        wrappers. MUST be strictly ascending — sorted, no duplicates; any non-increasing pair
+    ///        reverts `DuplicateId` (so an unsorted-but-unique array is rejected too).
+    /// @param recipient Non-zero address to match deposits against and transfer the total to.
     function finalizeWrap(uint256[] calldata ids, address recipient) external;
 }

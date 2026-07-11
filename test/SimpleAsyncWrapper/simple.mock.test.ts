@@ -1,7 +1,7 @@
 import {
   beforeAll, beforeEach, describe, expect, it
 } from "vitest";
-import { zeroHash } from "viem";
+import { zeroAddress, zeroHash } from "viem";
 
 import { createHarness } from "../setup/harness";
 import type { Harness } from "../setup/harness";
@@ -121,5 +121,73 @@ describe("SimpleAsyncWrapper", () => {
       wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
       "TooFewDecoys",
     );
+  });
+
+  it("reverts on an out-of-range deposit id", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+
+    await fundAndApprove(wrapper, alice, 1n);
+    await initWrap(wrapper, alice, alice.account.address); // only id 0 exists
+
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[1n, 2n], alice.account.address], txOpts(alice.account)),
+      "InvalidId",
+    );
+  });
+
+  it("rejects a zero recipient", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+
+    await fundAndApprove(wrapper, alice, 2n);
+    await initWrap(wrapper, alice, alice.account.address);
+    await initWrap(wrapper, alice, alice.account.address);
+
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[0n, 1n], zeroAddress], txOpts(alice.account)),
+      "ZeroAddress",
+    );
+  });
+
+  it("rejects unsorted or duplicate ids (must be strictly ascending)", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+
+    await fundAndApprove(wrapper, alice, 2n);
+    await initWrap(wrapper, alice, alice.account.address);
+    await initWrap(wrapper, alice, alice.account.address);
+
+    // unsorted-but-unique reverts DuplicateId (the constraint is strictly ascending, not just unique)
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[1n, 0n], alice.account.address], txOpts(alice.account)),
+      "DuplicateId",
+    );
+    // literal duplicate
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[0n, 0n], alice.account.address], txOpts(alice.account)),
+      "DuplicateId",
+    );
+  });
+
+  it("preserves an unmatched decoy deposit for its true recipient", async () => {
+    const { alice, bob } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+
+    await fundAndApprove(wrapper, alice, 1n);
+    await fundAndApprove(wrapper, bob, 1n);
+    await initWrap(wrapper, alice, alice.account.address); // id 0 -> alice
+    await initWrap(wrapper, bob, bob.account.address); // id 1 -> bob
+
+    // Finalize for alice over [0,1]: id 1 (bob's) is a decoy here and must survive untouched.
+    await sendOk(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT);
+    expect(await decryptBalance(bob)).toBe(0n);
+
+    // Bob's decoy deposit was preserved: he can still claim it in a later finalize over the same
+    // ids — and the already-matched id 0 (now zeroed) contributes nothing to him (no double-spend).
+    await sendOk(wrapper.write.finalizeWrap([[0n, 1n], bob.account.address], fheTxOpts(bob.account)));
+    expect(await decryptBalance(bob)).toBe(AMOUNT);
+    expect(await decryptBalance(alice)).toBe(AMOUNT); // unchanged
   });
 });

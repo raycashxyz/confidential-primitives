@@ -19,6 +19,11 @@ import {IERC7984AsyncWrapper} from "../../interfaces/IERC7984AsyncWrapper.sol";
  *         records an encrypted recipient. finalizeWrap variants homomorphically select
  *         matching deposits and transfer the resulting confidential balance to the
  *         cleartext recipient.
+ *
+ *         REENTRANCY: {_wrapIntoEscrow} and {_transferWrapped} make external calls
+ *         (safeTransferFrom / wrap / confidentialTransfer) BEFORE the caller records its own
+ *         state (deposit entries, nullifiers). Implementations MUST therefore guard their public
+ *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled wrappers do.
  */
 abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -54,6 +59,8 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
+    /// @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
+    ///      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
     function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
         if (amount == 0) revert ZeroAmount();
 
@@ -69,6 +76,7 @@ abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfi
         FHE.allowThis(wrappedAmount);
     }
 
+    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`.
     function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
