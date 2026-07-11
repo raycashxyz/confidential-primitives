@@ -42,11 +42,6 @@ export interface FhevmInstance {
     startTimestamp: number,
     durationDays: number,
   ) => Promise<Record<string, bigint | string | boolean>>;
-  publicDecrypt: (handles: (string | Uint8Array)[]) => Promise<{
-    clearValues: Record<string, bigint | string | boolean>;
-    abiEncodedClearValues: `0x${string}`;
-    decryptionProof: `0x${string}`;
-  }>;
 }
 
 type EncValue =
@@ -96,28 +91,6 @@ export async function encryptRecipient (
   return {
     handle,
     inputProof
-  };
-}
-
-/**
- * Public-decrypt a handle marked `FHE.makePubliclyDecryptable` and return the cleartext plus the
- * KMS decryption proof — the pair on-chain `FHE.checkSignatures` verifiers expect (e.g. the
- * wrappers' `finalizeUnwrap`, the auction's `settle`/`finalizeClaim`).
- */
-export async function publicDecryptEuint (
-  instance: FhevmInstance,
-  handle: Hex,
-): Promise<{ cleartext: bigint; decryptionProof: Hex }> {
-  const results = await instance.publicDecrypt([handle]);
-  const value = results.clearValues[handle] ?? results.clearValues[handle.toLowerCase()];
-  if (value === undefined) {
-    throw new Error(
-      `publicDecryptEuint: no cleartext for ${handle}; keys: [${Object.keys(results.clearValues).join(", ")}]`,
-    );
-  }
-  return {
-    cleartext: typeof value === "bigint" ? value : BigInt(String(value)),
-    decryptionProof: results.decryptionProof,
   };
 }
 

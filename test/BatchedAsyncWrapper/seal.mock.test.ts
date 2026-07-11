@@ -1,5 +1,5 @@
 /**
- * BatchedAsyncWrapperV2 — sealBatch liveness: a tail batch that never fills can be sealed
+ * BatchedAsyncWrapper — sealBatch liveness: a tail batch that never fills can be sealed
  * after the delay so it can still finalize.
  */
 import {
@@ -7,13 +7,13 @@ import {
 } from "vitest";
 import { parseEventLogs } from "viem";
 
-import { useBatchedV2Suite, AMOUNT, SEAL_DELAY } from "./setup/suite";
+import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
 import { assertRevertsWith } from "../setup/asserts";
 
-const boot = useBatchedV2Suite();
+const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapperV2 sealBatch", () => {
+describe("BatchedAsyncWrapper sealBatch", () => {
   it("reverts before the seal delay elapses", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap
@@ -52,7 +52,9 @@ describe("BatchedAsyncWrapperV2 sealBatch", () => {
     expect(await wrapper.read.batchClosed([0n])).toBe(false);
 
     await warpTime(SEAL_DELAY + 1n);
-    const sealReceipt = await send(wrapper.write.sealBatch([0n], txOpts(alice.account)));
+    // sealBatch is a state-changing write whose gas tevm under-estimates (the reentrancy-guard
+    // SSTOREs tip it into a silent OOG), so send with an explicit gas limit like the FHE calls.
+    const sealReceipt = await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
     const [sealed] = parseEventLogs({
       abi: wrapper.abi,
       logs: sealReceipt.logs,
@@ -65,6 +67,26 @@ describe("BatchedAsyncWrapperV2 sealBatch", () => {
     expect(await wrapper.read.currentBatchId()).toBe(1n);
 
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-    expect(await decryptBalance(wrapper, alice)).toBe(AMOUNT * 2n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+  });
+
+  it("auto-seals a stuck partial batch on the first finalize after the delay", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send, warpTime
+    } = await boot();
+    const { alice } = wallets;
+    const { contract: wrapper } = await deployWrapper(4n);
+    await fundAndApprove(wrapper, alice, 2n);
+
+    await initWrap(wrapper, alice, alice.account.address);
+    await initWrap(wrapper, alice, alice.account.address);
+    expect(await wrapper.read.batchClosed([0n])).toBe(false);
+
+    await warpTime(SEAL_DELAY + 1n);
+    await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
+
+    expect(await wrapper.read.batchClosed([0n])).toBe(true);
+    expect(await wrapper.read.currentBatchId()).toBe(1n);
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
   });
 });

@@ -11,7 +11,7 @@
  *   - `reset()` (call in `beforeEach`) restores that snapshot in ~a few ms instead of
  *     rebuilding — the coprocessor's ciphertext DB is content-addressed, so it needs no reset.
  *
- * Per-test contracts (wrappers, auctions) must still be deployed inside each test with
+ * Per-test contracts must still be deployed inside each test with
  * `force: true`: `loadState` rolls the chain back, but deployoor's in-memory store does not,
  * so a non-forced getOrDeploy would hand back a record pointing at a rolled-back address.
  */
