@@ -6,14 +6,14 @@ import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfa
 import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
 
 /**
- * @title SimpleAsyncWrapper
- * @notice Minimal async privacy layer for an existing ERC7984ERC20Wrapper.
+ * @title ContinuousAsyncWrapper
+ * @notice Continuous async privacy layer for an existing ERC7984ERC20Wrapper.
  *
- *         Deposits are finalized by caller-selected ids. This gives maximum
- *         flexibility, but the caller controls the decoy set quality; `minDecoys`
- *         only enforces a lower bound.
+ *         Deposits accumulate in one shared pool and are finalized by
+ *         caller-selected ids. This gives maximum flexibility, but the caller
+ *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
  */
-contract SimpleAsyncWrapper is ERC7984AsyncWrapper {
+contract ContinuousAsyncWrapper is ERC7984AsyncWrapper {
     uint256 public immutable minDecoys;
 
     struct Deposit {

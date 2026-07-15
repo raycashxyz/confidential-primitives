@@ -1,6 +1,6 @@
 /**
  * Gas benchmark for the two async wrapper shapes:
- *   - simple  : arbitrary deposit ids, matched encrypted amounts rewritten to zero
+ *   - continuous  : arbitrary deposit ids, matched encrypted amounts rewritten to zero
  *   - batched : closed batches + cleartext (batch, recipient) nullifier
  *
  * finalizeWrap transfers confidential balance from async escrow to the recipient.
@@ -15,7 +15,7 @@ import { encryptRecipient } from "./setup/fhe";
 import { txOpts, fheTxOpts } from "./setup/tx";
 import { getOrDeployMockUSDC } from "../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeploySimpleAsyncWrapper } from "../src/deployers/SimpleAsyncWrapper";
+import { getOrDeployContinuousAsyncWrapper } from "../src/deployers/ContinuousAsyncWrapper";
 import { getOrDeployBatchedAsyncWrapper } from "../src/deployers/BatchedAsyncWrapper";
 
 const SIZES = [
@@ -52,22 +52,22 @@ const ceilLog2 = (n: number): number => {
 const treeAdds = (n: number) => Math.max(0, n - 1);
 
 const hcuTotal = {
-  simple: (n: number) => OP.TRIVIAL + n * (OP.EQ_ADDR_CIPHER + 2 * OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64,
+  continuous: (n: number) => OP.TRIVIAL + n * (OP.EQ_ADDR_CIPHER + 2 * OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64,
   batched: (n: number) => n * (OP.EQ_ADDR_SCALAR + OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64
 };
 
 const hcuDepth = {
-  simple: (n: number) => OP.EQ_ADDR_CIPHER + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64,
+  continuous: (n: number) => OP.EQ_ADDR_CIPHER + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64,
   batched: (n: number) => OP.EQ_ADDR_SCALAR + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64
 };
 
 interface Row {
   n: number;
-  simpleFinalize: bigint | null;
+  continuousFinalize: bigint | null;
   batchedFinalize: bigint | null;
 }
 
-describe("Gas Estimation (simple vs batched async wrappers)", () => {
+describe("Gas Estimation (continuous vs batched async wrappers)", () => {
   it("measures finalize gas and reports analytic finalize HCU", async () => {
     const results: Row[] = [];
 
@@ -120,8 +120,8 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
       const fund = async (times: bigint) =>
         sendOk(underlying.write.transfer([alice.account.address, AMOUNT * times], txOpts(deployer.account)), "fund");
 
-      const fillSimple = async (n: number) => {
-        const { contract } = await getOrDeploySimpleAsyncWrapper({
+      const fillContinuous = async (n: number) => {
+        const { contract } = await getOrDeployContinuousAsyncWrapper({
           walletClient: deployer,
           publicClient,
           store,
@@ -131,7 +131,7 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
           ],
           force: true,
         });
-        await sendOk(underlying.write.approve([contract.address, AMOUNT * BigInt(n)], txOpts(alice.account)), "approve simple");
+        await sendOk(underlying.write.approve([contract.address, AMOUNT * BigInt(n)], txOpts(alice.account)), "approve continuous");
 
         for (let i = 0; i < n; i++) {
           const { handle, inputProof } = await encR(contract.address);
@@ -139,7 +139,7 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
             AMOUNT,
             handle,
             inputProof
-          ], fheTxOpts(alice.account)), `simple initWrap #${i}`);
+          ], fheTxOpts(alice.account)), `continuous initWrap #${i}`);
         }
 
         return contract;
@@ -172,20 +172,20 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
       };
 
       return {
-        alice, gasOrNull, fund, fillSimple, fillBatched
+        alice, gasOrNull, fund, fillContinuous, fillBatched
       };
     };
 
     for (const n of SIZES) {
       const {
-        alice, gasOrNull, fund, fillSimple, fillBatched
+        alice, gasOrNull, fund, fillContinuous, fillBatched
       } = await bootRow();
       await fund(BigInt(n) * 2n);
 
-      const simple = await fillSimple(n);
+      const continuous = await fillContinuous(n);
       const indices = Array.from({ length: n }, (_, i) => BigInt(i));
-      const simpleFinalize = await gasOrNull(
-        simple.write.finalizeWrap([indices, alice.account.address], fheTxOpts(alice.account)),
+      const continuousFinalize = await gasOrNull(
+        continuous.write.finalizeWrap([indices, alice.account.address], fheTxOpts(alice.account)),
       );
 
       const batched = await fillBatched(n);
@@ -195,7 +195,7 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
 
       results.push({
         n,
-        simpleFinalize,
+        continuousFinalize,
         batchedFinalize,
       });
     }
@@ -206,40 +206,40 @@ describe("Gas Estimation (simple vs batched async wrappers)", () => {
 
     console.log("\n  MEASURED EVM gas — finalize all N deposits to one recipient");
     console.log("  ┌────────┬───────────────┬───────────────┐");
-    console.log("  │ N      │ simple        │ batched       │");
+    console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
     for (const r of results) {
-      console.log(`  │ ${String(r.n).padEnd(6)} │ ${g(r.simpleFinalize)} │ ${g(r.batchedFinalize)} │`);
+      console.log(`  │ ${String(r.n).padEnd(6)} │ ${g(r.continuousFinalize)} │ ${g(r.batchedFinalize)} │`);
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
     console.log("\n  ANALYTIC total HCU (cap 20,000,000/tx) — finalize only, HCULimit op costs");
     console.log("  ┌────────┬───────────────┬───────────────┐");
-    console.log("  │ N      │ simple        │ batched       │");
+    console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
     for (const n of SIZES) {
-      console.log(`  │ ${String(n).padEnd(6)} │ ${h(hcuTotal.simple(n))} │ ${h(hcuTotal.batched(n))} │`);
+      console.log(`  │ ${String(n).padEnd(6)} │ ${h(hcuTotal.continuous(n))} │ ${h(hcuTotal.batched(n))} │`);
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
     console.log("\n  ANALYTIC HCU DEPTH (cap 5,000,000/tx; X = over cap) — finalize critical path");
     console.log("  ┌────────┬─────────────────┬─────────────────┐");
-    console.log("  │ N      │ simple          │ batched         │");
+    console.log("  │ N      │ continuous      │ batched         │");
     console.log("  ├────────┼─────────────────┼─────────────────┤");
     for (const n of SIZES) {
-      console.log(`  │ ${String(n).padEnd(6)} │ ${capped(hcuDepth.simple(n), DEPTH_CAP)} │ ${capped(hcuDepth.batched(n), DEPTH_CAP)} │`);
+      console.log(`  │ ${String(n).padEnd(6)} │ ${capped(hcuDepth.continuous(n), DEPTH_CAP)} │ ${capped(hcuDepth.batched(n), DEPTH_CAP)} │`);
     }
     console.log("  └────────┴─────────────────┴─────────────────┘\n");
 
     for (const r of results) {
       if (r.n <= 32) {
-        expect(r.simpleFinalize, `simple finalize gas @${r.n}`).not.toBeNull();
+        expect(r.continuousFinalize, `continuous finalize gas @${r.n}`).not.toBeNull();
       }
       expect(r.batchedFinalize, `batched finalize gas @${r.n}`).not.toBeNull();
     }
-    expect(hcuDepth.simple(48)).toBeLessThan(DEPTH_CAP);
+    expect(hcuDepth.continuous(48)).toBeLessThan(DEPTH_CAP);
     expect(hcuDepth.batched(48)).toBeLessThan(DEPTH_CAP);
-    expect(hcuTotal.simple(48)).toBeLessThan(TOTAL_CAP);
+    expect(hcuTotal.continuous(48)).toBeLessThan(TOTAL_CAP);
     expect(hcuTotal.batched(48)).toBeLessThan(TOTAL_CAP);
   }, 900_000);
 });
