@@ -23,12 +23,10 @@ Our wrappers close that last gap. They give the first mile the same privacy as e
 
 [Valerio's article](https://x.com/valerioHQ/status/2071658396583948427) introduced the design: decoys plus an asynchronous, two-step wrap that break the link between the ERC-20 you deposit and the confidential ERC-7984 you receive. These contracts sit on top of an existing `ERC7984ERC20Wrapper`: they don't reimplement the confidential token, they escrow it. Downstream nothing changes. Once finalized, the recipient holds ordinary ERC-7984.
 
-We ship two, trading caller control for built-in structure:
+**`StealthWrapAdapter`** is the abstract base and the core of the design. It owns the escrow lifecycle — pull a deposit in, wrap it into escrowed confidential balance, and on finalize deliver the sum of a recipient's matched deposits back out — and leaves a single decision to its implementations: **how the anonymity set, the crowd of decoys, is formed.** That one axis is the only thing the two contracts we ship differ on:
 
 - **`ContinuousStealthWrapAdapter`** is the flexible one: the caller chooses exactly which deposits to finalize together, so they control the decoy set. That's maximum control, but privacy is only as strong as the decoys they pick.
 - **`BatchedStealthWrapAdapter`** is the opinionated one: deposits fall into fixed-size batches, and the whole batch *is* the anonymity set, so privacy is structural instead of caller-chosen. The cost is waiting for a batch to fill (or time out).
-
-Both are detailed below.
 
 ## How it works
 
@@ -42,6 +40,8 @@ The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20
 
 ## Choosing a wrapper
 
+Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implementations of the abstract `StealthWrapAdapter` and share its escrow-and-deliver machinery. They differ only in how the anonymity set is formed, and that one difference cascades into privacy, liveness, and gas.
+
 | Property | `ContinuousStealthWrapAdapter` | `BatchedStealthWrapAdapter` |
 | --- | --- | --- |
 | Finalization unit | Caller-selected deposit ids | Closed batch ids |
@@ -49,30 +49,10 @@ The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20
 | Decoy quality | Flexible, but caller-controlled | Protocol-shaped by batch size and seal delay |
 | Replay protection | Matched encrypted deposit amounts are rewritten to zero | Clear `(batch, recipient)` nullifier |
 | Liveness | Can finalize as soon as enough decoys exist | Batch fills, or closes after `sealDelay` on `sealBatch` / first finalize |
-| Max measured finalize | 32 ids in the current benchmark; 48 reverts | 48-slot batch succeeds |
 
 `ContinuousStealthWrapAdapter` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedStealthWrapAdapter` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
 
-## Privacy model
-
-| Signal | Visibility |
-| --- | --- |
-| Depositor | Public on `initWrap` |
-| Clear ERC-20 amount | Public on `initWrap` |
-| Recipient before finalize | Encrypted `eaddress` |
-| Recipient at finalize | Public function argument |
-| Finalized amount | Encrypted `euint64` transfer |
-| Which deposits matched | Hidden inside the selected set or batch |
-
-## Tree-reduced finalize
-
-Every FHE op costs HCU on top of EVM gas, with both total-work and sequential-depth caps. A serial accumulator like `sum = FHE.add(sum, payout)` creates a depth-N dependency chain. Both wrappers instead collect per-deposit payouts and reduce them pairwise, so the add depth is `ceil(log2 N)`.
-
-The batched wrapper caps batches at 48 slots so a one-batch finalize stays inside the current FHEVM budget with headroom. Near that cap, finalize one batch per transaction; multi-batch finalization is for smaller batches.
-
-## Gas snapshot
-
-Measured with `pnpm test:bench` on `fhevm-tevm-mocks`. This table only compares `finalizeWrap`, where the privacy/anonymity tradeoff matters most. For `ContinuousStealthWrapAdapter`, `N` is the number of selected deposit ids. For `BatchedStealthWrapAdapter`, `N` is the closed batch size.
+Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm-mocks`, comparing `finalizeWrap` (`N` is the anonymity-set size — selected ids for continuous, batch size for batched):
 
 | Anonymity set size `N` | Continuous finalize | Batched finalize |
 | ---: | ---: | ---: |
@@ -84,15 +64,20 @@ Measured with `pnpm test:bench` on `fhevm-tevm-mocks`. This table only compares 
 | 32 | 3,230,298 | 1,802,742 |
 | 48 | REVERT | 2,528,895 |
 
-The ceiling matters more than the gas delta: the continuous wrapper finalizes 32 selected ids here but reverts at 48, while the batched wrapper reaches the configured 48-slot cap. Batched finalization is also cheaper at every measured size because it doesn't rewrite every matched deposit amount in storage and uses a clear `(batch, recipient)` nullifier.
+Batched is cheaper at every size and scales to a full 48-slot set; continuous costs more per decoy and reverts at 48 here. The gap is that continuous does more encrypted work per deposit — it matches against an encrypted recipient and rewrites each scanned deposit's amount in storage, where batched matches a cleartext recipient and uses a plain `(batch, recipient)` nullifier. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
 
-## Repository layout
+## Privacy model
 
-- `contracts/interfaces/IStealthWrapAdapter.sol`: shared interface and common errors.
-- `contracts/wrappers/base/StealthWrapAdapter.sol`: the abstract base, holding escrow funding, the confidential-transfer helper, and the tree-sum reduction.
-- `contracts/wrappers/ContinuousStealthWrapAdapter.sol`: concrete caller-selected-id implementation.
-- `contracts/wrappers/BatchedStealthWrapAdapter.sol`: concrete batched implementation.
-- `contracts/mocks/`: helpers for tests and local development (a configured OZ wrapper and a mock ERC-20).
+Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this set of deposits (or this batch)." It does **not** reveal which of those deposits were `R`'s: each deposit's encrypted recipient is compared to `R` homomorphically (`FHE.eq`, under encryption) and selected obliviously, so the chain never learns the per-deposit match. It doesn't even reveal whether *any* deposit matched — the payout is an encrypted sum that can be zero. So `R`'s address is public at finalize, but it stays unlinkable to any individual deposit.
+
+| Signal | Visibility |
+| --- | --- |
+| Depositor | Public on `initWrap` |
+| Clear ERC-20 amount | Public on `initWrap` |
+| A deposit's recipient | Encrypted `eaddress`, set at `initWrap` |
+| Recipient at finalize | Public address argument, but matched homomorphically against every scanned deposit, so unlinkable to any of them |
+| Which deposits matched | Hidden (oblivious `FHE.select`) |
+| Amount delivered | Encrypted `euint64`; can be zero |
 
 ## Install
 
