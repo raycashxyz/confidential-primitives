@@ -11,15 +11,15 @@ import { decryptEuint, encryptRecipient } from "../setup/fhe";
 import { txOpts, fheTxOpts } from "../setup/tx";
 import { getOrDeployMockUSDC } from "../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeploySimpleAsyncWrapper } from "../../src/deployers/SimpleAsyncWrapper";
+import { getOrDeployContinuousStealthWrapAdapter } from "../../src/deployers/ContinuousStealthWrapAdapter";
 
 const AMOUNT = 100n;
 
 type MockUSDCContract = Awaited<ReturnType<typeof getOrDeployMockUSDC>>["contract"];
 type ConfidentialWrapperContract = Awaited<ReturnType<typeof getOrDeployMockERC7984ERC20Wrapper>>["contract"];
-type SimpleWrapperContract = Awaited<ReturnType<typeof getOrDeploySimpleAsyncWrapper>>["contract"];
+type ContinuousWrapperContract = Awaited<ReturnType<typeof getOrDeployContinuousStealthWrapAdapter>>["contract"];
 
-describe("SimpleAsyncWrapper", () => {
+describe("ContinuousStealthWrapAdapter", () => {
   let H: Harness;
   let underlying: MockUSDCContract;
   let confidentialWrapper: ConfidentialWrapperContract;
@@ -57,7 +57,7 @@ describe("SimpleAsyncWrapper", () => {
   };
 
   const deployWrapper = () =>
-    getOrDeploySimpleAsyncWrapper({
+    getOrDeployContinuousStealthWrapAdapter({
       walletClient: H.wallets.deployer,
       publicClient: H.publicClient,
       store: H.store,
@@ -68,12 +68,12 @@ describe("SimpleAsyncWrapper", () => {
       force: true,
     });
 
-  const fundAndApprove = async (wrapper: SimpleWrapperContract, who: WalletWithAccount, count: bigint) => {
+  const fundAndApprove = async (wrapper: ContinuousWrapperContract, who: WalletWithAccount, count: bigint) => {
     await sendOk(underlying.write.transfer([who.account.address, AMOUNT * count], txOpts(H.wallets.deployer.account)));
     await sendOk(underlying.write.approve([wrapper.address, AMOUNT * count], txOpts(who.account)));
   };
 
-  const initWrap = async (wrapper: SimpleWrapperContract, depositor: WalletWithAccount, recipient: `0x${string}`) => {
+  const initWrap = async (wrapper: ContinuousWrapperContract, depositor: WalletWithAccount, recipient: `0x${string}`) => {
     const { handle, inputProof } = await encryptRecipient(
       H.fhevm.instance,
       wrapper.address,

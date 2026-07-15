@@ -1,5 +1,5 @@
 /**
- * BatchedAsyncWrapper — sealBatch liveness: a tail batch that never fills can be sealed
+ * BatchedStealthWrapAdapter — sealBatch liveness: a tail batch that never fills can be sealed
  * after the delay so it can still finalize.
  */
 import {
@@ -13,7 +13,7 @@ import { assertRevertsWith } from "../setup/asserts";
 
 const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapper sealBatch", () => {
+describe("BatchedStealthWrapAdapter sealBatch", () => {
   it("reverts before the seal delay elapses", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap

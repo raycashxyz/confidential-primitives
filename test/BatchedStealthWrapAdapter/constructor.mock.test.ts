@@ -1,5 +1,5 @@
 /**
- * BatchedAsyncWrapper — constructor + initWrap.
+ * BatchedStealthWrapAdapter — constructor + initWrap.
  * (finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
  * so vitest can run them on separate workers; all share the harness in setup/suite.)
  */
@@ -13,11 +13,11 @@ import { txOpts, fheTxOpts } from "../setup/tx";
 import { assertRevertsWith } from "../setup/asserts";
 import { getOrDeployMockUSDC } from "../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeployBatchedAsyncWrapper } from "../../src/deployers/BatchedAsyncWrapper";
+import { getOrDeployBatchedStealthWrapAdapter } from "../../src/deployers/BatchedStealthWrapAdapter";
 
 const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapper", () => {
+describe("BatchedStealthWrapAdapter", () => {
 
   describe("constructor", () => {
     it("reverts on zero batch size", async () => {
@@ -69,7 +69,7 @@ describe("BatchedAsyncWrapper", () => {
         ],
         force: true,
       });
-      const { contract: wrapper } = await getOrDeployBatchedAsyncWrapper({
+      const { contract: wrapper } = await getOrDeployBatchedStealthWrapAdapter({
         walletClient: deployer,
         publicClient,
         store,
@@ -96,7 +96,7 @@ describe("BatchedAsyncWrapper", () => {
         "ZeroAmount",
       );
 
-      // Non-multiples are rounded down by the configured wrapper; the async wrapper
+      // Non-multiples are rounded down by the configured wrapper; the adapter
       // records the amount actually wrapped, not the requested amount.
       const { handle: h2, inputProof: p2 } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,

@@ -1,5 +1,5 @@
 /**
- * Shared harness + `boot()` factory for the BatchedAsyncWrapper suites.
+ * Shared harness + `boot()` factory for the BatchedStealthWrapAdapter suites.
  *
  * The batched wrapper tests are split across several *.mock.test.ts files so vitest can run them on
  * separate workers (see vitest.config.ts). Each file calls `useBatchedSuite()` at the top
@@ -16,12 +16,12 @@ import { encryptRecipient, decryptEuint } from "../../setup/fhe";
 import { txOpts, fheTxOpts } from "../../setup/tx";
 import { getOrDeployMockUSDC } from "../../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeployBatchedAsyncWrapper } from "../../../src/deployers/BatchedAsyncWrapper";
+import { getOrDeployBatchedStealthWrapAdapter } from "../../../src/deployers/BatchedStealthWrapAdapter";
 
 export const AMOUNT = 100n;
 export const SEAL_DELAY = 3600n; // 1h
 
-export type WrapperContract = Awaited<ReturnType<typeof getOrDeployBatchedAsyncWrapper>>["contract"];
+export type WrapperContract = Awaited<ReturnType<typeof getOrDeployBatchedStealthWrapAdapter>>["contract"];
 type MockUSDCContract = Awaited<ReturnType<typeof getOrDeployMockUSDC>>["contract"];
 type ConfidentialWrapperContract = Awaited<ReturnType<typeof getOrDeployMockERC7984ERC20Wrapper>>["contract"];
 
@@ -58,7 +58,7 @@ export function useBatchedSuite () {
 
   beforeEach(() => H.reset());
 
-  // Bind the per-test helpers over the shared, freshly-reset harness. Wrappers deploy with
+  // Bind the per-test helpers over the shared, freshly-reset harness. Adapters deploy with
   // `force: true` because the chain rolls back each test but deployoor's store does not.
   return async function boot () {
     const {
@@ -76,7 +76,7 @@ export function useBatchedSuite () {
     };
 
     const deployWrapper = (maxBatch: bigint, sealDelay: bigint = SEAL_DELAY, force = true) =>
-      getOrDeployBatchedAsyncWrapper({
+      getOrDeployBatchedStealthWrapAdapter({
         walletClient: deployer,
         publicClient,
         store,

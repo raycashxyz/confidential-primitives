@@ -3,14 +3,15 @@ pragma solidity ^0.8.27;
 
 import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
-import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
+import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 
 /**
- * @title BatchedAsyncWrapper
- * @notice Batch-based async wrapper with a cleartext per-(batch, recipient)
+ * @title BatchedStealthWrapAdapter
+ * @author Valerio Leo (@valeriohq)
+ * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
  *         nullifier and a tree-reduced payout sum.
  *
- *         Same privacy model as the other wrappers: a deposit is SENDER-TRANSPARENT
+ *         Same privacy model as the other adapters: a deposit is SENDER-TRANSPARENT
  *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
  *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
  *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
@@ -37,10 +38,10 @@ import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
  *         who submits it via {initWrap}. The recipient recognises their deposit by
  *         watching for their handle in {WrapInitiated}.
  *
- *         Like the other wrappers: deposits are wrapped immediately into confidential
+ *         Like the other adapters: deposits are wrapped immediately into confidential
  *         balance owned by this contract, then transferred to recipients on finalize.
  */
-contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
+contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on batch size, set so {finalizeWrap} over ONE batch is PROVABLY
     ///      completable — an unfinalizable batch would lock funds. finalize does a
     ///      fixed amount of FHE work per slot (`eq` + `select` + tree `add`), so its
@@ -106,7 +107,7 @@ contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
         uint256 _sealDelay,
         IERC7984ERC20Wrapper confidentialWrapper_
     )
-        ERC7984AsyncWrapper(confidentialWrapper_)
+        StealthWrapAdapter(confidentialWrapper_)
     {
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
         // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could

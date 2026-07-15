@@ -1,5 +1,5 @@
 /**
- * BatchedAsyncWrapper — finalizeWrap correctness (gating, replay nullifier, per-recipient
+ * BatchedStealthWrapAdapter — finalizeWrap correctness (gating, replay nullifier, per-recipient
  * scan). Multi-batch + scale cases live in the sibling *.finalize-scale file.
  */
 import {
@@ -12,7 +12,7 @@ import { assertRevertsWith } from "../setup/asserts";
 
 const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapper finalizeWrap", () => {
+describe("BatchedStealthWrapAdapter finalizeWrap", () => {
   it("reverts while the batch is still open", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap
