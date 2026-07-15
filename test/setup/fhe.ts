@@ -2,7 +2,7 @@
  * Minimal FHEVM encrypt/decrypt helpers over a fhevm-tevm-mocks instance.
  *
  * Standalone replacement for the encrypt/decrypt utilities used by the private harness — no
- * relayer-SDK production path, just the test-instance calls the wrappers need.
+ * relayer-SDK production path, just the test-instance calls the adapters need.
  */
 import {
   getAddress, isHex, padHex, toHex

@@ -58,7 +58,7 @@ export function useBatchedSuite () {
 
   beforeEach(() => H.reset());
 
-  // Bind the per-test helpers over the shared, freshly-reset harness. Wrappers deploy with
+  // Bind the per-test helpers over the shared, freshly-reset harness. Adapters deploy with
   // `force: true` because the chain rolls back each test but deployoor's store does not.
   return async function boot () {
     const {

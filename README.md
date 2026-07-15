@@ -90,8 +90,8 @@ pnpm add @raycashxyz/confidential-primitives
 Solidity consumers import the sources directly:
 
 ```solidity
-import {ContinuousStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/wrappers/ContinuousStealthWrapAdapter.sol";
-import {BatchedStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/wrappers/BatchedStealthWrapAdapter.sol";
+import {ContinuousStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/adapters/ContinuousStealthWrapAdapter.sol";
+import {BatchedStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/adapters/BatchedStealthWrapAdapter.sol";
 import {IStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/interfaces/IStealthWrapAdapter.sol";
 ```
 

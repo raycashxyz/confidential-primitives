@@ -11,7 +11,7 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
  *         nullifier and a tree-reduced payout sum.
  *
- *         Same privacy model as the other wrappers: a deposit is SENDER-TRANSPARENT
+ *         Same privacy model as the other adapters: a deposit is SENDER-TRANSPARENT
  *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
  *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
  *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
@@ -38,7 +38,7 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         who submits it via {initWrap}. The recipient recognises their deposit by
  *         watching for their handle in {WrapInitiated}.
  *
- *         Like the other wrappers: deposits are wrapped immediately into confidential
+ *         Like the other adapters: deposits are wrapped immediately into confidential
  *         balance owned by this contract, then transferred to recipients on finalize.
  */
 contract BatchedStealthWrapAdapter is StealthWrapAdapter {

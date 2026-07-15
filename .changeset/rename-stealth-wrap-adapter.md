@@ -11,4 +11,4 @@ Existing consumers swap the type and import names:
 - `SimpleAsyncWrapper` → `ContinuousStealthWrapAdapter`
 - `BatchedAsyncWrapper` → `BatchedStealthWrapAdapter`
 
-`initWrap` / `finalizeWrap`, the `WrapInitiated` / `WrapFinalized` events, and the error set are unchanged — only the type names and file paths change.
+`initWrap` / `finalizeWrap`, the `WrapInitiated` / `WrapFinalized` events, and the error set are unchanged. Only the type names and file paths change: imports move from `contracts/wrappers/` to `contracts/adapters/`.

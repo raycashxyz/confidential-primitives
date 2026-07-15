@@ -24,7 +24,7 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         REENTRANCY: {_wrapIntoEscrow} and {_transferWrapped} make external calls
  *         (safeTransferFrom / wrap / confidentialTransfer) BEFORE the caller records its own
  *         state (deposit entries, nullifiers). Implementations MUST therefore guard their public
- *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled wrappers do.
+ *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled adapters do.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
