@@ -7,7 +7,8 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 
 /**
  * @title BatchedStealthWrapAdapter
- * @notice Batch-based async wrapper with a cleartext per-(batch, recipient)
+ * @author Valerio Leo (@valeriohq)
+ * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
  *         nullifier and a tree-reduced payout sum.
  *
  *         Same privacy model as the other wrappers: a deposit is SENDER-TRANSPARENT

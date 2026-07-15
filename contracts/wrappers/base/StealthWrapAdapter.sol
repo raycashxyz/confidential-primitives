@@ -11,7 +11,8 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
 
 /**
  * @title StealthWrapAdapter
- * @notice Abstract async privacy layer for an existing ERC7984ERC20Wrapper.
+ * @author Valerio Leo (@valeriohq)
+ * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper.
  *
  *         This contract does not implement an ERC7984 token. It escrows confidential
  *         balances of `CONFIDENTIAL_WRAPPER`: initWrap pulls clear ERC20 from the

@@ -96,7 +96,7 @@ describe("BatchedStealthWrapAdapter", () => {
         "ZeroAmount",
       );
 
-      // Non-multiples are rounded down by the configured wrapper; the async wrapper
+      // Non-multiples are rounded down by the configured wrapper; the adapter
       // records the amount actually wrapped, not the requested amount.
       const { handle: h2, inputProof: p2 } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,

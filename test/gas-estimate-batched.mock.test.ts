@@ -1,9 +1,9 @@
 /**
- * Gas benchmark for the two async wrapper shapes:
+ * Gas benchmark for the two stealth wrap adapter shapes:
  *   - continuous  : arbitrary deposit ids, matched encrypted amounts rewritten to zero
  *   - batched : closed batches + cleartext (batch, recipient) nullifier
  *
- * finalizeWrap transfers confidential balance from async escrow to the recipient.
+ * finalizeWrap transfers confidential balance from escrow to the recipient.
  */
 import {
   describe, it, expect
@@ -67,7 +67,7 @@ interface Row {
   batchedFinalize: bigint | null;
 }
 
-describe("Gas Estimation (continuous vs batched async wrappers)", () => {
+describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
   it("measures finalize gas and reports analytic finalize HCU", async () => {
     const results: Row[] = [];
 
@@ -97,8 +97,8 @@ describe("Gas Estimation (continuous vs batched async wrappers)", () => {
         }
       };
 
-      const encR = (asyncWrapper: Address) =>
-        encryptRecipient(fhevm.instance, asyncWrapper, alice.account.address, alice.account.address);
+      const encR = (adapter: Address) =>
+        encryptRecipient(fhevm.instance, adapter, alice.account.address, alice.account.address);
 
       const { contract: underlying } = await getOrDeployMockUSDC({
         walletClient: deployer,

@@ -33,8 +33,8 @@ Both are detailed below.
 ## How it works
 
 1. Deploy or choose an `ERC7984ERC20Wrapper` for your ERC-20.
-2. Deploy an async wrapper pointed at that confidential wrapper.
-3. The depositor approves the async wrapper for the clear ERC-20, then calls `initWrap` with an encrypted recipient.
+2. Deploy a `ContinuousStealthWrapAdapter` or `BatchedStealthWrapAdapter` pointed at that confidential wrapper.
+3. The depositor approves that adapter for the clear ERC-20, then calls `initWrap` with an encrypted recipient.
 4. `initWrap` pulls the clear ERC-20, calls `ERC7984ERC20Wrapper.wrap(address(this), amount)`, and records the encrypted recipient in escrow.
 5. `finalizeWrap` homomorphically selects the deposits matching a recipient and transfers the resulting confidential balance from escrow to that recipient.
 

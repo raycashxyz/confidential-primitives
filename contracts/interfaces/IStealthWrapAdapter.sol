@@ -5,7 +5,8 @@ import {externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 
 /**
  * @title IStealthWrapAdapter
- * @notice Shared interface for async privacy layers over existing ERC7984ERC20Wrapper tokens.
+ * @author Valerio Leo (@valeriohq)
+ * @notice Shared interface for stealth wrap adapters over existing ERC7984ERC20Wrapper tokens.
  */
 interface IStealthWrapAdapter {
     /// @dev The requested clear amount wraps to zero after applying the underlying wrapper rate.
@@ -26,7 +27,7 @@ interface IStealthWrapAdapter {
     function rate() external view returns (uint256);
     function getDepositsLength() external view returns (uint256);
 
-    /// @notice Deposit clear ERC20 into async escrow with an encrypted recipient.
+    /// @notice Deposit clear ERC20 into escrow with an encrypted recipient.
     /// @dev The input proof must be bound to `(address(this), msg.sender)`.
     function initWrap(
         uint256 amount,

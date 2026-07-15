@@ -7,7 +7,8 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 
 /**
  * @title ContinuousStealthWrapAdapter
- * @notice Continuous async privacy layer for an existing ERC7984ERC20Wrapper.
+ * @author Valerio Leo (@valeriohq)
+ * @notice Continuous stealth wrap adapter for an existing ERC7984ERC20Wrapper.
  *
  *         Deposits accumulate in one shared pool and are finalized by
  *         caller-selected ids. This gives maximum flexibility, but the caller
