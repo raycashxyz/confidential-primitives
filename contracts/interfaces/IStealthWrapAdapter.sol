@@ -4,10 +4,10 @@ pragma solidity ^0.8.27;
 import {externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 
 /**
- * @title IERC7984AsyncWrapper
+ * @title IStealthWrapAdapter
  * @notice Shared interface for async privacy layers over existing ERC7984ERC20Wrapper tokens.
  */
-interface IERC7984AsyncWrapper {
+interface IStealthWrapAdapter {
     /// @dev The requested clear amount wraps to zero after applying the underlying wrapper rate.
     error ZeroAmount();
     /// @dev Used for invalid constructor/configuration addresses and finalize recipients.

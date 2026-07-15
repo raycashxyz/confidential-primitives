@@ -1,5 +1,5 @@
 /**
- * BatchedAsyncWrapper — multi-batch finalize + the scale headline: the tree reduction
+ * BatchedStealthWrapAdapter — multi-batch finalize + the scale headline: the tree reduction
  * clears a full batch of 32. Isolated in its own file
  * (the 32-deposit case is the slowest test in the suite) so it runs on its own worker.
  */
@@ -13,7 +13,7 @@ import { assertRevertsWith } from "../setup/asserts";
 
 const boot = useBatchedSuite();
 
-describe("BatchedAsyncWrapper finalizeWrap — multi-batch & scale", () => {
+describe("BatchedStealthWrapAdapter finalizeWrap — multi-batch & scale", () => {
   it("finalizes multiple closed batches in one call", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send

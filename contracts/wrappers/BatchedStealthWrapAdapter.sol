@@ -3,10 +3,10 @@ pragma solidity ^0.8.27;
 
 import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
-import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
+import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 
 /**
- * @title BatchedAsyncWrapper
+ * @title BatchedStealthWrapAdapter
  * @notice Batch-based async wrapper with a cleartext per-(batch, recipient)
  *         nullifier and a tree-reduced payout sum.
  *
@@ -40,7 +40,7 @@ import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
  *         Like the other wrappers: deposits are wrapped immediately into confidential
  *         balance owned by this contract, then transferred to recipients on finalize.
  */
-contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
+contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on batch size, set so {finalizeWrap} over ONE batch is PROVABLY
     ///      completable — an unfinalizable batch would lock funds. finalize does a
     ///      fixed amount of FHE work per slot (`eq` + `select` + tree `add`), so its
@@ -106,7 +106,7 @@ contract BatchedAsyncWrapper is ERC7984AsyncWrapper {
         uint256 _sealDelay,
         IERC7984ERC20Wrapper confidentialWrapper_
     )
-        ERC7984AsyncWrapper(confidentialWrapper_)
+        StealthWrapAdapter(confidentialWrapper_)
     {
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
         // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could

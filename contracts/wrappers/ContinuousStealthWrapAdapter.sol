@@ -3,17 +3,17 @@ pragma solidity ^0.8.27;
 
 import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
-import {ERC7984AsyncWrapper} from "./base/ERC7984AsyncWrapper.sol";
+import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 
 /**
- * @title ContinuousAsyncWrapper
+ * @title ContinuousStealthWrapAdapter
  * @notice Continuous async privacy layer for an existing ERC7984ERC20Wrapper.
  *
  *         Deposits accumulate in one shared pool and are finalized by
  *         caller-selected ids. This gives maximum flexibility, but the caller
  *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
  */
-contract ContinuousAsyncWrapper is ERC7984AsyncWrapper {
+contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     uint256 public immutable minDecoys;
 
     struct Deposit {
@@ -34,7 +34,7 @@ contract ContinuousAsyncWrapper is ERC7984AsyncWrapper {
     Deposit[] public deposits;
 
     constructor(IERC7984ERC20Wrapper confidentialWrapper_, uint256 _minDecoys)
-        ERC7984AsyncWrapper(confidentialWrapper_)
+        StealthWrapAdapter(confidentialWrapper_)
     {
         if (_minDecoys == 0) revert InvalidMinDecoys();
         minDecoys = _minDecoys;

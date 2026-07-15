@@ -25,8 +25,8 @@ Our wrappers close that last gap. They give the first mile the same privacy as e
 
 We ship two, trading caller control for built-in structure:
 
-- **`ContinuousAsyncWrapper`** is the flexible one: the caller chooses exactly which deposits to finalize together, so they control the decoy set. That's maximum control, but privacy is only as strong as the decoys they pick.
-- **`BatchedAsyncWrapper`** is the opinionated one: deposits fall into fixed-size batches, and the whole batch *is* the anonymity set, so privacy is structural instead of caller-chosen. The cost is waiting for a batch to fill (or time out).
+- **`ContinuousStealthWrapAdapter`** is the flexible one: the caller chooses exactly which deposits to finalize together, so they control the decoy set. That's maximum control, but privacy is only as strong as the decoys they pick.
+- **`BatchedStealthWrapAdapter`** is the opinionated one: deposits fall into fixed-size batches, and the whole batch *is* the anonymity set, so privacy is structural instead of caller-chosen. The cost is waiting for a batch to fill (or time out).
 
 Both are detailed below.
 
@@ -42,7 +42,7 @@ The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20
 
 ## Choosing a wrapper
 
-| Property | `ContinuousAsyncWrapper` | `BatchedAsyncWrapper` |
+| Property | `ContinuousStealthWrapAdapter` | `BatchedStealthWrapAdapter` |
 | --- | --- | --- |
 | Finalization unit | Caller-selected deposit ids | Closed batch ids |
 | Anonymity set | The selected ids, with `minDecoys` as a lower bound | Every deposit in the closed batch |
@@ -51,7 +51,7 @@ The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20
 | Liveness | Can finalize as soon as enough decoys exist | Batch fills, or closes after `sealDelay` on `sealBatch` / first finalize |
 | Max measured finalize | 32 ids in the current benchmark; 48 reverts | 48-slot batch succeeds |
 
-`ContinuousAsyncWrapper` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedAsyncWrapper` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
+`ContinuousStealthWrapAdapter` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedStealthWrapAdapter` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
 
 ## Privacy model
 
@@ -72,7 +72,7 @@ The batched wrapper caps batches at 48 slots so a one-batch finalize stays insid
 
 ## Gas snapshot
 
-Measured with `pnpm test:bench` on `fhevm-tevm-mocks`. This table only compares `finalizeWrap`, where the privacy/anonymity tradeoff matters most. For `ContinuousAsyncWrapper`, `N` is the number of selected deposit ids. For `BatchedAsyncWrapper`, `N` is the closed batch size.
+Measured with `pnpm test:bench` on `fhevm-tevm-mocks`. This table only compares `finalizeWrap`, where the privacy/anonymity tradeoff matters most. For `ContinuousStealthWrapAdapter`, `N` is the number of selected deposit ids. For `BatchedStealthWrapAdapter`, `N` is the closed batch size.
 
 | Anonymity set size `N` | Continuous finalize | Batched finalize |
 | ---: | ---: | ---: |
@@ -88,10 +88,10 @@ The ceiling matters more than the gas delta: the continuous wrapper finalizes 32
 
 ## Repository layout
 
-- `contracts/interfaces/IERC7984AsyncWrapper.sol`: shared interface and common errors.
-- `contracts/wrappers/base/ERC7984AsyncWrapper.sol`: the abstract base, holding escrow funding, the confidential-transfer helper, and the tree-sum reduction.
-- `contracts/wrappers/ContinuousAsyncWrapper.sol`: concrete caller-selected-id implementation.
-- `contracts/wrappers/BatchedAsyncWrapper.sol`: concrete batched implementation.
+- `contracts/interfaces/IStealthWrapAdapter.sol`: shared interface and common errors.
+- `contracts/wrappers/base/StealthWrapAdapter.sol`: the abstract base, holding escrow funding, the confidential-transfer helper, and the tree-sum reduction.
+- `contracts/wrappers/ContinuousStealthWrapAdapter.sol`: concrete caller-selected-id implementation.
+- `contracts/wrappers/BatchedStealthWrapAdapter.sol`: concrete batched implementation.
 - `contracts/mocks/`: test-only helpers (a configured OZ wrapper and a mock ERC-20).
 
 ## Install
@@ -103,9 +103,9 @@ pnpm add @raycashxyz/confidential-primitives
 Solidity consumers import the sources directly:
 
 ```solidity
-import {ContinuousAsyncWrapper} from "@raycashxyz/confidential-primitives/contracts/wrappers/ContinuousAsyncWrapper.sol";
-import {BatchedAsyncWrapper} from "@raycashxyz/confidential-primitives/contracts/wrappers/BatchedAsyncWrapper.sol";
-import {IERC7984AsyncWrapper} from "@raycashxyz/confidential-primitives/contracts/interfaces/IERC7984AsyncWrapper.sol";
+import {ContinuousStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/wrappers/ContinuousStealthWrapAdapter.sol";
+import {BatchedStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/wrappers/BatchedStealthWrapAdapter.sol";
+import {IStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/interfaces/IStealthWrapAdapter.sol";
 ```
 
 ## Develop

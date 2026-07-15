@@ -11,15 +11,15 @@ import { decryptEuint, encryptRecipient } from "../setup/fhe";
 import { txOpts, fheTxOpts } from "../setup/tx";
 import { getOrDeployMockUSDC } from "../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeployContinuousAsyncWrapper } from "../../src/deployers/ContinuousAsyncWrapper";
+import { getOrDeployContinuousStealthWrapAdapter } from "../../src/deployers/ContinuousStealthWrapAdapter";
 
 const AMOUNT = 100n;
 
 type MockUSDCContract = Awaited<ReturnType<typeof getOrDeployMockUSDC>>["contract"];
 type ConfidentialWrapperContract = Awaited<ReturnType<typeof getOrDeployMockERC7984ERC20Wrapper>>["contract"];
-type ContinuousWrapperContract = Awaited<ReturnType<typeof getOrDeployContinuousAsyncWrapper>>["contract"];
+type ContinuousWrapperContract = Awaited<ReturnType<typeof getOrDeployContinuousStealthWrapAdapter>>["contract"];
 
-describe("ContinuousAsyncWrapper", () => {
+describe("ContinuousStealthWrapAdapter", () => {
   let H: Harness;
   let underlying: MockUSDCContract;
   let confidentialWrapper: ConfidentialWrapperContract;
@@ -57,7 +57,7 @@ describe("ContinuousAsyncWrapper", () => {
   };
 
   const deployWrapper = () =>
-    getOrDeployContinuousAsyncWrapper({
+    getOrDeployContinuousStealthWrapAdapter({
       walletClient: H.wallets.deployer,
       publicClient: H.publicClient,
       store: H.store,

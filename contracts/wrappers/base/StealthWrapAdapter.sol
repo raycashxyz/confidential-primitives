@@ -7,10 +7,10 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
-import {IERC7984AsyncWrapper} from "../../interfaces/IERC7984AsyncWrapper.sol";
+import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
 
 /**
- * @title ERC7984AsyncWrapper
+ * @title StealthWrapAdapter
  * @notice Abstract async privacy layer for an existing ERC7984ERC20Wrapper.
  *
  *         This contract does not implement an ERC7984 token. It escrows confidential
@@ -25,7 +25,7 @@ import {IERC7984AsyncWrapper} from "../../interfaces/IERC7984AsyncWrapper.sol";
  *         state (deposit entries, nullifiers). Implementations MUST therefore guard their public
  *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled wrappers do.
  */
-abstract contract ERC7984AsyncWrapper is IERC7984AsyncWrapper, ZamaEthereumConfig, ReentrancyGuard {
+abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IERC7984ERC20Wrapper public immutable CONFIDENTIAL_WRAPPER;

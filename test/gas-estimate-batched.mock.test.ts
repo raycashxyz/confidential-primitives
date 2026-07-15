@@ -15,8 +15,8 @@ import { encryptRecipient } from "./setup/fhe";
 import { txOpts, fheTxOpts } from "./setup/tx";
 import { getOrDeployMockUSDC } from "../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../src/deployers/MockERC7984ERC20Wrapper";
-import { getOrDeployContinuousAsyncWrapper } from "../src/deployers/ContinuousAsyncWrapper";
-import { getOrDeployBatchedAsyncWrapper } from "../src/deployers/BatchedAsyncWrapper";
+import { getOrDeployContinuousStealthWrapAdapter } from "../src/deployers/ContinuousStealthWrapAdapter";
+import { getOrDeployBatchedStealthWrapAdapter } from "../src/deployers/BatchedStealthWrapAdapter";
 
 const SIZES = [
   1,
@@ -121,7 +121,7 @@ describe("Gas Estimation (continuous vs batched async wrappers)", () => {
         sendOk(underlying.write.transfer([alice.account.address, AMOUNT * times], txOpts(deployer.account)), "fund");
 
       const fillContinuous = async (n: number) => {
-        const { contract } = await getOrDeployContinuousAsyncWrapper({
+        const { contract } = await getOrDeployContinuousStealthWrapAdapter({
           walletClient: deployer,
           publicClient,
           store,
@@ -146,7 +146,7 @@ describe("Gas Estimation (continuous vs batched async wrappers)", () => {
       };
 
       const fillBatched = async (n: number) => {
-        const { contract } = await getOrDeployBatchedAsyncWrapper({
+        const { contract } = await getOrDeployBatchedStealthWrapAdapter({
           walletClient: deployer,
           publicClient,
           store,
