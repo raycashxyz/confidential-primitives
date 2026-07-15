@@ -1,5 +1,20 @@
 # @raycashxyz/confidential-primitives
 
+## 0.4.0
+
+### Minor Changes
+
+- Rename the wrapper family to `StealthWrapAdapter` (breaking) and restructure the README.
+
+  Existing consumers swap the type and import names:
+
+  - `IERC7984AsyncWrapper` → `IStealthWrapAdapter`
+  - `ERC7984AsyncWrapper` (abstract base) → `StealthWrapAdapter`
+  - `SimpleAsyncWrapper` → `ContinuousStealthWrapAdapter`
+  - `BatchedAsyncWrapper` → `BatchedStealthWrapAdapter`
+
+  `initWrap` / `finalizeWrap`, the `WrapInitiated` / `WrapFinalized` events, and the error set are unchanged. Only the type names and file paths change: imports move from `contracts/wrappers/` to `contracts/adapters/`.
+
 ## 0.3.0
 
 ### Minor Changes
