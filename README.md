@@ -92,7 +92,7 @@ The ceiling matters more than the gas delta: the continuous wrapper finalizes 32
 - `contracts/wrappers/base/StealthWrapAdapter.sol`: the abstract base, holding escrow funding, the confidential-transfer helper, and the tree-sum reduction.
 - `contracts/wrappers/ContinuousStealthWrapAdapter.sol`: concrete caller-selected-id implementation.
 - `contracts/wrappers/BatchedStealthWrapAdapter.sol`: concrete batched implementation.
-- `contracts/mocks/`: test-only helpers (a configured OZ wrapper and a mock ERC-20).
+- `contracts/mocks/`: helpers for tests and local development (a configured OZ wrapper and a mock ERC-20).
 
 ## Install
 
