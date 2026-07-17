@@ -109,6 +109,19 @@ ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing
 - **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`) — which is public information anyway.
 - **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall — and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
 
+### Cost
+
+Every active permission on a key adds a fixed amount of encrypted work to each `transferFrom` (two `le`, one `sub`, one `and`, one `add`), which is why permissions are capped at `MAX_PERMISSIONS = 8` per (user, token, spender) — comfortably inside the FHEVM HCU budget with room to spare, and far above the realistic 2–4 tiers. Measured with `pnpm test:bench` on `fhevm-tevm-mocks` (`N` is the number of active permissions; ±1% run-to-run mock variance):
+
+| Active permissions `N` | `transferFrom` gas |
+| ---: | ---: |
+| 1 | 581,489 |
+| 2 | 682,246 |
+| 4 | 878,159 |
+| 8 | 1,269,988 |
+
+A denied spend costs exactly the same as a permitted one — same op sequence, so gas is not a side channel on the outcome. The benchmark asserts this.
+
 ### Privacy model
 
 | Signal | Visibility |
