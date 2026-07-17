@@ -90,9 +90,9 @@ The wrap adapters cover money coming *into* the confidential world. `RecurringAl
 
 ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing: an operator can move **any** amount of your balance while approved. There is no `approve(spender, 100)` in confidential-token land — a cleartext allowance sitting next to an encrypted balance would leak the very numbers the balance math hides. `RecurringAllowance` fills that gap: you make the contract your operator once, then grant per-spender budgets here — "100 USDC per day", with the 100 encrypted. A spender can only move your funds through `transferFrom`, which enforces every budget homomorphically. Think Permit2's allowance module or a card's spending limit, for confidential tokens.
 
-- **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry.
-- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero — a denied spend is indistinguishable on-chain from a permitted one.
-- **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call.
+- **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry — or **`permitSetPermission`** does the same from an off-chain signature, so granting costs the user zero gas (see [Signature permits](#signature-permits-gasless-grants-and-confidential-cheques)).
+- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero — a denied spend is indistinguishable on-chain from a permitted one. **`tryTransferFrom`** is the payment-processor variant: items that fail a *cleartext* precondition (revoked grant, expired operator) are skipped with a `TransferSkipped` event instead of reverting the batch.
+- **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call. **`getGrantedPairs`** enumerates every (token, spender) a user has granted, on-chain — a wallet can render (and revoke) the "who can spend my money" screen without an indexer.
 
 ### How it works
 
@@ -108,6 +108,24 @@ ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing
 - **Allowance tracks value moved, not attempts.** `spent` is credited with the amount the token reports as actually transferred, so a pull against an insufficient balance consumes nothing and can be retried after a top-up.
 - **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`) — which is public information anyway.
 - **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall — and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
+
+### Signature permits (gasless grants and confidential cheques)
+
+Permit2 taught EVM users to authorize token movements with signatures instead of transactions. The confidential version has one twist: the amount is a ciphertext, so **the permit signs the ciphertext handle**. The owner encrypts the amount off-chain with the input proof bound to `(this contract, spender)` — meaning only that spender can ever submit it — and signs EIP-712 over the struct including the handle. Substituting any other ciphertext breaks the signature; submitting as anyone else breaks the proof.
+
+Two flows:
+
+- **`permitSetPermission`** — gasless grants. The owner signs a `PermitGrant`; the spender submits it and pays the gas; the result is a completely normal permission. Granting a subscription budget costs the user zero transactions.
+- **`permitTransferFrom`** — one-shot transfers up to a signed encrypted cap, optionally bound to a recipient: a *confidential cheque*. The spender chooses the actual amount at execution; over-cap requests move an encrypted zero, obliviously.
+
+Nonces are Permit2-style unordered bitmaps: any number of permits can be outstanding, and `invalidateUnorderedNonces` cancels signed-but-unsubmitted ones in bulk. Signatures verify via ECDSA or ERC-1271 (smart accounts).
+
+Two caveats to design around:
+
+- **A submitted cheque burns its nonce regardless of the encrypted outcome.** The outcome cannot be read in cleartext, so a cheque drawn against an insufficient balance is consumed unspent — like a bounced paper cheque, the owner re-issues. (Gasless *grants* don't have this problem: a grant against an empty wallet just sits there until funded.)
+- **How long an input proof stays submittable after signing is an operational property of the FHEVM gateway**, not of this contract. Size `sigDeadline` accordingly; for grants the natural pattern (spender submits immediately on receiving the signature) makes the window a non-issue.
+
+The user who signs sees only a `bytes32` handle — **only the client that encrypted the amount can show them the number they're committing to**, so the signing UI and the encryption client must be the same trusted surface.
 
 ### Cost
 

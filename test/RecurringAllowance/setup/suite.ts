@@ -48,6 +48,26 @@ export interface SpendParams {
   tokenAddr?: Hex;
 }
 
+export interface PermitGrantMessage {
+  token: Hex;
+  spender: Hex;
+  limitHandle: Hex;
+  duration: bigint;
+  startTime: bigint;
+  endTime: bigint;
+  nonce: bigint;
+  sigDeadline: bigint;
+}
+
+export interface PermitSpendMessage {
+  token: Hex;
+  spender: Hex;
+  capHandle: Hex;
+  to: Hex;
+  nonce: bigint;
+  sigDeadline: bigint;
+}
+
 /** Register the per-file harness (once per file) and return the bound helpers. */
 export function useAllowanceSuite () {
   let H: Harness;
@@ -200,6 +220,55 @@ export function useAllowanceSuite () {
     return decryptAllowanceHandle(permission.spent, as ?? user);
   };
 
+  const eip712Domain = () => ({
+    name: "RecurringAllowance",
+    version: "1",
+    chainId: 31337,
+    verifyingContract: allowance.address
+  } as const);
+
+  const PERMIT_GRANT_TYPES = {
+    PermitGrant: [
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "limitHandle", type: "bytes32" },
+      { name: "duration", type: "uint64" },
+      { name: "startTime", type: "uint64" },
+      { name: "endTime", type: "uint64" },
+      { name: "nonce", type: "uint256" },
+      { name: "sigDeadline", type: "uint256" }
+    ]
+  } as const;
+
+  const PERMIT_SPEND_TYPES = {
+    PermitSpend: [
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "capHandle", type: "bytes32" },
+      { name: "to", type: "address" },
+      { name: "nonce", type: "uint256" },
+      { name: "sigDeadline", type: "uint256" }
+    ]
+  } as const;
+
+  const signPermitGrant = (owner: WalletWithAccount, message: PermitGrantMessage) =>
+    owner.signTypedData({
+      account: owner.account,
+      domain: eip712Domain(),
+      types: PERMIT_GRANT_TYPES,
+      primaryType: "PermitGrant",
+      message
+    });
+
+  const signPermitSpend = (owner: WalletWithAccount, message: PermitSpendMessage) =>
+    owner.signTypedData({
+      account: owner.account,
+      domain: eip712Domain(),
+      types: PERMIT_SPEND_TYPES,
+      primaryType: "PermitSpend",
+      message
+    });
+
   return {
     ctx: () => ({
       H,
@@ -220,5 +289,7 @@ export function useAllowanceSuite () {
     decryptAllowanceHandle,
     decryptSpent,
     balanceOf,
+    signPermitGrant,
+    signPermitSpend,
   };
 }

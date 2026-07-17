@@ -4,8 +4,11 @@ pragma solidity ^0.8.27;
 import {FHE, euint64, ebool, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
+import {UnorderedNonces} from "./base/UnorderedNonces.sol";
 
 /**
  * @title RecurringAllowance
@@ -46,11 +49,31 @@ import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
  *         only the cleartext shape: that a permission exists, its period, its window,
  *         and when spends were attempted. Amounts stay encrypted end to end.
  *
- *         REENTRANCY: {transferFrom} calls the caller-supplied `token` address, so both
- *         overloads are `nonReentrant`. All other state is keyed by `msg.sender`, which
- *         inside such a call is the token itself — it can only touch its own keys.
+ *         SIGNATURE PERMITS (the Permit2 analog): because amounts are encrypted, a permit
+ *         signs the CIPHERTEXT HANDLE — the owner encrypts the amount off-chain with the
+ *         input proof bound to `(this, spender)` and signs EIP-712 over the struct
+ *         including that handle, so only the named spender can submit it and no other
+ *         ciphertext can be substituted. {permitSetPermission} creates a permission
+ *         gaslessly for the owner (the spender submits and pays); {permitTransferFrom}
+ *         executes a one-shot transfer up to a signed encrypted cap, optionally bound to
+ *         a recipient (a "confidential cheque"). Nonces are Permit2-style unordered
+ *         bitmaps; signatures verify via ECDSA or ERC-1271. NOTE a submitted cheque burns
+ *         its nonce regardless of the encrypted outcome (the outcome is unknowable in
+ *         cleartext), and how long an input proof remains submittable after signing is an
+ *         operational property of the FHEVM gateway — size `sigDeadline` accordingly.
+ *
+ *         REENTRANCY: {transferFrom}, {tryTransferFrom} and {permitTransferFrom} call the
+ *         caller-supplied `token` address, so all are `nonReentrant`. All other state is
+ *         keyed by `msg.sender`, which inside such a call is the token itself — it can
+ *         only touch its own keys.
  */
-contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, ReentrancyGuard {
+contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, ReentrancyGuard, EIP712, UnorderedNonces {
+    bytes32 public constant PERMIT_GRANT_TYPEHASH = keccak256(
+        "PermitGrant(address token,address spender,bytes32 limitHandle,uint64 duration,uint64 startTime,uint64 endTime,uint256 nonce,uint256 sigDeadline)"
+    );
+    bytes32 public constant PERMIT_SPEND_TYPEHASH = keccak256(
+        "PermitSpend(address token,address spender,bytes32 capHandle,address to,uint256 nonce,uint256 sigDeadline)"
+    );
     /// @notice Hard cap on live permissions per (user, token, spender) key.
     /// @dev Every active permission adds ~6 FHE ops to each {transferFrom} for the key,
     ///      and the FHEVM HCU-per-tx budget bounds how many fit: the batched stealth
@@ -66,10 +89,17 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     mapping(address user => mapping(address token => mapping(address spender => Permission[]))) private _permissions;
 
+    /// @dev Enumeration of a user's granted (token, spender) pairs, maintained under the
+    ///      invariant "pair listed <=> its permissions array is non-empty" so wallets can
+    ///      render (and revoke) every grant without an indexer.
+    mapping(address user => TokenSpenderPair[]) private _grantedPairs;
+    /// @dev pairKey (keccak(token, spender)) => index in {_grantedPairs} PLUS ONE (0 = absent).
+    mapping(address user => mapping(bytes32 pairKey => uint256 indexPlusOne)) private _grantedPairIndex;
+
     /// @dev Ids start at 1 so 0 never names a permission.
     uint256 private _nextPermissionId = 1;
 
-    constructor() {
+    constructor() EIP712("RecurringAllowance", "1") {
         E_ZERO = FHE.asEuint64(0);
         FHE.allowThis(E_ZERO);
     }
@@ -99,6 +129,60 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint64 startTime,
         uint64 endTime
     ) external returns (uint256 permissionId) {
+        euint64 eLimit = FHE.fromExternal(limit, inputProof);
+        permissionId = _createPermission(msg.sender, token, spender, eLimit, duration, startTime, endTime);
+    }
+
+    /**
+     * @notice Create a permission from an owner's signed {PermitGrant} — the gasless
+     *         grant flow. The owner signs off-chain; the named spender submits (and
+     *         pays gas). The resulting permission is indistinguishable from one the
+     *         owner created via {setPermission}.
+     * @dev The grant's `limitHandle` must come with an input proof the owner created
+     *      bound to `(this, grant.spender)` — which is also why only the named spender
+     *      can submit: for anyone else `FHE.fromExternal` rejects the proof. The
+     *      explicit {SpenderMismatch} check just fails faster and cleaner.
+     *      Zero-valued time fields resolve AT SUBMISSION (startTime 0 = "when the
+     *      spender activates it"), bounded by `sigDeadline`.
+     * @param owner The user granting the permission (the signer)
+     * @param grant The signed grant parameters
+     * @param inputProof Proof for `grant.limitHandle`
+     * @param signature EIP-712 signature by `owner` (ECDSA or ERC-1271)
+     * @return permissionId Stable id of the new permission
+     */
+    function permitSetPermission(
+        address owner,
+        PermitGrant calldata grant,
+        bytes calldata inputProof,
+        bytes calldata signature
+    ) external returns (uint256 permissionId) {
+        if (msg.sender != grant.spender) revert SpenderMismatch();
+        if (block.timestamp > grant.sigDeadline) revert SignatureExpired(grant.sigDeadline);
+        _useUnorderedNonce(owner, grant.nonce);
+        _verifyPermitGrant(owner, grant, signature);
+
+        euint64 eLimit = FHE.fromExternal(externalEuint64.wrap(grant.limitHandle), inputProof);
+        permissionId = _createPermission(
+            owner,
+            grant.token,
+            grant.spender,
+            eLimit,
+            grant.duration,
+            grant.startTime,
+            grant.endTime
+        );
+    }
+
+    /// @dev Shared creation path for {setPermission} and {permitSetPermission}.
+    function _createPermission(
+        address user,
+        address token,
+        address spender,
+        euint64 eLimit,
+        uint64 duration,
+        uint64 startTime,
+        uint64 endTime
+    ) private returns (uint256 permissionId) {
         if (token == address(0)) revert InvalidTokenAddress();
         if (spender == address(0)) revert InvalidSpenderAddress();
 
@@ -107,16 +191,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (endTime == 0) endTime = type(uint64).max;
         _checkWindow(startTime, endTime);
 
-        Permission[] storage permissions = _permissions[msg.sender][token][spender];
+        Permission[] storage permissions = _permissions[user][token][spender];
         _pruneExpired(permissions);
         if (permissions.length >= MAX_PERMISSIONS) revert TooManyPermissions();
 
-        euint64 eLimit = FHE.fromExternal(limit, inputProof);
         FHE.allowThis(eLimit);
-        FHE.allow(eLimit, msg.sender);
+        FHE.allow(eLimit, user);
         FHE.allow(eLimit, spender);
         // Let both parties decrypt the initial (and any reset) spent value.
-        FHE.allow(E_ZERO, msg.sender);
+        FHE.allow(E_ZERO, user);
         FHE.allow(E_ZERO, spender);
 
         permissionId = _nextPermissionId++;
@@ -131,8 +214,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
                 duration: duration
             })
         );
+        _trackPair(user, token, spender);
 
-        emit PermissionSet(msg.sender, token, spender, permissionId, eLimit, duration, startTime, endTime);
+        emit PermissionSet(user, token, spender, permissionId, eLimit, duration, startTime, endTime);
     }
 
     /**
@@ -223,6 +307,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
         permissions[permissionIndex] = permissions[permissions.length - 1];
         permissions.pop();
+        if (permissions.length == 0) _untrackPair(msg.sender, token, spender);
 
         emit PermissionInvalidated(msg.sender, token, spender, permissionId);
     }
@@ -237,6 +322,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     function lockdown(TokenSpenderPair[] calldata pairs) external {
         for (uint256 i = 0; i < pairs.length; i++) {
             delete _permissions[msg.sender][pairs[i].token][pairs[i].spender];
+            _untrackPair(msg.sender, pairs[i].token, pairs[i].spender);
             emit Lockdown(msg.sender, pairs[i].token, pairs[i].spender);
         }
     }
@@ -270,13 +356,91 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     /**
      * @notice Batch variant of {transferFrom}. Atomic: if any item hits a cleartext
      *         revert (e.g. `NoPermissions` after a user lockdown), the whole batch
-     *         reverts — filter recipients off-chain first.
+     *         reverts — filter recipients off-chain first, or use {tryTransferFrom}.
      */
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
             _spend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
         }
+    }
+
+    /**
+     * @notice Lenient batch for payment processors: items that fail a CLEARTEXT
+     *         precondition (no active permission window, or the token call reverting —
+     *         e.g. an expired operator grant) are skipped with a {TransferSkipped}
+     *         event instead of reverting the batch. Encrypted denials are NOT skips:
+     *         they execute obliviously and move an encrypted zero, exactly as in
+     *         {transferFrom}.
+     * @dev Malformed input proofs still revert the whole call (`FHE.fromExternal` is
+     *      not catchable), as does a `token` address with no code (the compiler's
+     *      extcodesize check reverts outside try/catch) — both are the caller's own
+     *      inputs to get right.
+     * @return executed Per-item flags: true if the token transfer was executed
+     *         (its encrypted outcome may still be zero).
+     */
+    function tryTransferFrom(TransferDetails[] calldata transfers) external nonReentrant returns (bool[] memory executed) {
+        executed = new bool[](transfers.length);
+        for (uint256 i = 0; i < transfers.length; i++) {
+            TransferDetails calldata t = transfers[i];
+            executed[i] = _trySpend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
+        }
+    }
+
+    /**
+     * @notice Execute an owner-signed one-shot transfer: move up to the signed encrypted
+     *         cap of `permit.token` from `owner` to `to` — the "confidential cheque".
+     *         The spender chooses the actual `requested` amount at execution;
+     *         `min`-style semantics apply obliviously (over-cap requests move zero).
+     * @dev Touches no stored permissions — this is a parallel, stateless rail (plus the
+     *      nonce bit). The nonce is consumed on submission REGARDLESS of the encrypted
+     *      outcome: a cheque against an insufficient balance is burned unspent (the
+     *      outcome cannot be read in cleartext). Like every spend path, requires this
+     *      contract to be an ERC-7984 operator for `owner` on the token.
+     * @param owner The signer whose funds move
+     * @param permit The signed cheque parameters
+     * @param capProof Proof for `permit.capHandle` (bound to `(this, permit.spender)`)
+     * @param requested The spender's encrypted requested amount
+     * @param requestedProof Proof for `requested` (bound to `(this, msg.sender)`)
+     * @param to Recipient; must match `permit.to` when the cheque binds one
+     * @param signature EIP-712 signature by `owner` (ECDSA or ERC-1271)
+     * @return transferred Encrypted amount actually moved (transiently ACL'd to the caller)
+     */
+    function permitTransferFrom(
+        address owner,
+        PermitSpend calldata permit,
+        bytes calldata capProof,
+        externalEuint64 requested,
+        bytes calldata requestedProof,
+        address to,
+        bytes calldata signature
+    ) external nonReentrant returns (euint64 transferred) {
+        if (msg.sender != permit.spender) revert SpenderMismatch();
+        if (block.timestamp > permit.sigDeadline) revert SignatureExpired(permit.sigDeadline);
+        if (permit.to != address(0) && to != permit.to) revert RecipientMismatch();
+        _useUnorderedNonce(owner, permit.nonce);
+        _verifyPermitSpend(owner, permit, signature);
+
+        euint64 eAmount = _chequeAmount(permit.capHandle, capProof, requested, requestedProof);
+
+        FHE.allowTransient(eAmount, permit.token);
+        transferred = IERC7984(permit.token).confidentialTransferFrom(owner, to, eAmount);
+        FHE.allowTransient(transferred, msg.sender);
+
+        emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
+    }
+
+    /// @dev `min(requested, cap)`-style oblivious amount: `requested` if within the
+    ///      signed cap, an encrypted zero otherwise.
+    function _chequeAmount(
+        bytes32 capHandle,
+        bytes calldata capProof,
+        externalEuint64 requested,
+        bytes calldata requestedProof
+    ) private returns (euint64) {
+        euint64 eCap = FHE.fromExternal(externalEuint64.wrap(capHandle), capProof);
+        euint64 eRequested = FHE.fromExternal(requested, requestedProof);
+        return FHE.select(FHE.le(eRequested, eCap), eRequested, E_ZERO);
     }
 
     /// @notice Permission at `permissionIndex` for the key. Indices are NOT stable
@@ -310,6 +474,18 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         return _permissions[user][token][spender].length;
     }
 
+    function getGrantedPairCount(address user) external view returns (uint256) {
+        return _grantedPairs[user].length;
+    }
+
+    function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory) {
+        return _grantedPairs[user][index];
+    }
+
+    function getGrantedPairs(address user) external view returns (TokenSpenderPair[] memory) {
+        return _grantedPairs[user];
+    }
+
     // -----------------------------------------------------------------------
     // Spend path
     // -----------------------------------------------------------------------
@@ -325,7 +501,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      malicious `token` can only ever corrupt permission keys naming itself.
      */
     function _spend(address from, address to, euint64 amount, address token) private returns (euint64 transferred) {
-        ebool permitted = _checkPermissions(from, token, msg.sender, amount);
+        (ebool permitted, bool anyActive) = _evaluatePermissions(from, token, msg.sender, amount);
+        if (!anyActive) revert NoPermissions();
 
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         // The token computes over the handle during this call only.
@@ -342,8 +519,37 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
+     * @dev Lenient sibling of {_spend} for {tryTransferFrom}: cleartext failures skip
+     *      instead of reverting. The try/catch is safe against a malicious token — a
+     *      reverting call rolls back its own effects, our state writes only happen on
+     *      success, and reentrancy is blocked at the entry point.
+     */
+    function _trySpend(address from, address to, euint64 amount, address token) private returns (bool) {
+        (ebool permitted, bool anyActive) = _evaluatePermissions(from, token, msg.sender, amount);
+        if (!anyActive) {
+            emit TransferSkipped(from, to, token, msg.sender, SkipReason.NO_PERMISSIONS);
+            return false;
+        }
+
+        euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
+        FHE.allowTransient(eTransferAmount, token);
+        try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
+            _recordSpend(from, token, msg.sender, transferred);
+            FHE.allowTransient(transferred, msg.sender);
+            emit AllowanceTransfer(from, to, token, msg.sender, transferred);
+            return true;
+        } catch {
+            emit TransferSkipped(from, to, token, msg.sender, SkipReason.TOKEN_CALL_FAILED);
+            return false;
+        }
+    }
+
+    /**
      * @dev First pass: prune expired permissions, lazily reset elapsed periods, and
      *      AND together every active permission's "does the requested amount fit".
+     *      Never reverts on "nothing active" — callers decide (strict paths revert
+     *      `NoPermissions`, {_trySpend} skips). When `anyActive` is false, `permitted`
+     *      is uninitialized and MUST NOT be used.
      *
      *      The fit check must not underflow: FHE arithmetic WRAPS, so the naive
      *      `amount <= limit - spent` turns `spent > limit` (possible after a limit
@@ -352,17 +558,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      `spent + amount <= limit` and never wraps in a way that matters — when
      *      `amount > limit` the second operand's wrap is discarded by the AND.
      */
-    function _checkPermissions(
+    function _evaluatePermissions(
         address user,
         address token,
         address spender,
         euint64 amount
-    ) private returns (ebool permitted) {
+    ) private returns (ebool permitted, bool anyActive) {
         Permission[] storage permissions = _permissions[user][token][spender];
-        if (permissions.length == 0) revert NoPermissions();
 
         uint64 nowTs = uint64(block.timestamp);
-        bool anyActive = false;
         uint256 count = permissions.length;
         uint256 i = 0;
         while (i < count) {
@@ -386,7 +590,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             }
         }
 
-        if (!anyActive) revert NoPermissions();
+        // Keep the enumeration invariant if the prune emptied the array. On strict
+        // paths a NoPermissions revert rolls this back together with the prune; on
+        // the lenient path both persist.
+        if (permissions.length == 0) _untrackPair(user, token, spender);
     }
 
     /**
@@ -435,6 +642,69 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // -----------------------------------------------------------------------
     // Shared helpers
     // -----------------------------------------------------------------------
+
+    /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271).
+    function _verifyPermitGrant(address owner, PermitGrant calldata grant, bytes calldata signature) private view {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PERMIT_GRANT_TYPEHASH,
+                grant.token,
+                grant.spender,
+                grant.limitHandle,
+                grant.duration,
+                grant.startTime,
+                grant.endTime,
+                grant.nonce,
+                grant.sigDeadline
+            )
+        );
+        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSigner();
+        }
+    }
+
+    /// @dev EIP-712 verification for {PermitSpend} (ECDSA or ERC-1271).
+    function _verifyPermitSpend(address owner, PermitSpend calldata permit, bytes calldata signature) private view {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                PERMIT_SPEND_TYPEHASH,
+                permit.token,
+                permit.spender,
+                permit.capHandle,
+                permit.to,
+                permit.nonce,
+                permit.sigDeadline
+            )
+        );
+        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSigner();
+        }
+    }
+
+    /// @dev Add (token, spender) to `user`'s granted-pair enumeration if absent.
+    function _trackPair(address user, address token, address spender) private {
+        bytes32 pairKey = keccak256(abi.encodePacked(token, spender));
+        if (_grantedPairIndex[user][pairKey] != 0) return;
+        _grantedPairs[user].push(TokenSpenderPair({token: token, spender: spender}));
+        _grantedPairIndex[user][pairKey] = _grantedPairs[user].length; // index + 1
+    }
+
+    /// @dev Swap-and-pop (token, spender) out of `user`'s enumeration; no-op if absent.
+    function _untrackPair(address user, address token, address spender) private {
+        bytes32 pairKey = keccak256(abi.encodePacked(token, spender));
+        uint256 indexPlusOne = _grantedPairIndex[user][pairKey];
+        if (indexPlusOne == 0) return;
+
+        TokenSpenderPair[] storage pairs = _grantedPairs[user];
+        uint256 lastIndex = pairs.length - 1;
+        if (indexPlusOne - 1 != lastIndex) {
+            TokenSpenderPair memory last = pairs[lastIndex];
+            pairs[indexPlusOne - 1] = last;
+            _grantedPairIndex[user][keccak256(abi.encodePacked(last.token, last.spender))] = indexPlusOne;
+        }
+        pairs.pop();
+        delete _grantedPairIndex[user][pairKey];
+    }
 
     /// @dev A window is valid if it ends in the future and after it starts.
     function _checkWindow(uint64 startTime, uint64 endTime) private view {

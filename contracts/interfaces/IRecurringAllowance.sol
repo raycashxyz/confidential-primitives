@@ -50,10 +50,56 @@ interface IRecurringAllowance {
         address token;
     }
 
-    /// @dev A (token, spender) pair for {lockdown}.
+    /// @dev A (token, spender) pair for {lockdown} and the granted-pair enumeration.
     struct TokenSpenderPair {
         address token;
         address spender;
+    }
+
+    /**
+     * @dev Signed authorization to CREATE a permission (the gasless-grant flow).
+     *      `limitHandle` is the bytes32 handle of an encrypted limit whose input proof
+     *      the owner created bound to `(this contract, spender)` — so only `spender`
+     *      can submit it. Signing the handle commits the owner to that exact ciphertext.
+     */
+    struct PermitGrant {
+        address token;
+        address spender;
+        /// @dev Handle of the encrypted per-period limit (an `externalEuint64`).
+        bytes32 limitHandle;
+        /// @dev Same sentinel semantics as {setPermission} — 0 means max / "at submission".
+        uint64 duration;
+        uint64 startTime;
+        uint64 endTime;
+        /// @dev Unordered nonce (see {UnorderedNonces}).
+        uint256 nonce;
+        /// @dev Signature expiry — the permit cannot be submitted after this timestamp.
+        uint256 sigDeadline;
+    }
+
+    /**
+     * @dev Signed authorization for a ONE-SHOT transfer up to an encrypted cap (the
+     *      "confidential cheque"). Consumed on submission regardless of the encrypted
+     *      outcome — a cheque against an insufficient balance still burns its nonce.
+     */
+    struct PermitSpend {
+        address token;
+        address spender;
+        /// @dev Handle of the encrypted cap (an `externalEuint64`), proof bound to `spender`.
+        bytes32 capHandle;
+        /// @dev Bound recipient; address(0) lets the spender choose at execution.
+        address to;
+        uint256 nonce;
+        uint256 sigDeadline;
+    }
+
+    /// @dev Why {tryTransferFrom} skipped an item.
+    enum SkipReason {
+        NONE,
+        /// @dev No active permission window for (from, token, spender).
+        NO_PERMISSIONS,
+        /// @dev The token call reverted (e.g. this contract is not an operator for `from`).
+        TOKEN_CALL_FAILED
     }
 
     /// @dev `token` is the zero address.
@@ -71,6 +117,14 @@ interface IRecurringAllowance {
     error NoPermissions();
     /// @dev Adding one more permission would exceed {RecurringAllowance-MAX_PERMISSIONS}.
     error TooManyPermissions();
+    /// @dev The permit's `sigDeadline` has passed.
+    error SignatureExpired(uint256 sigDeadline);
+    /// @dev The signature does not verify for the claimed owner (ECDSA or ERC-1271).
+    error InvalidSigner();
+    /// @dev A permit must be submitted by the spender it names (its proof binds them anyway).
+    error SpenderMismatch();
+    /// @dev The permit binds a recipient and `to` differs from it.
+    error RecipientMismatch();
 
     /// @notice A new permission was created.
     event PermissionSet(
@@ -128,6 +182,27 @@ interface IRecurringAllowance {
         euint64 transferred
     );
 
+    /// @notice A {tryTransferFrom} item was skipped for a cleartext reason (encrypted
+    ///         denials are NOT skips — they execute and transfer an encrypted zero).
+    event TransferSkipped(
+        address indexed from,
+        address indexed to,
+        address indexed token,
+        address spender,
+        SkipReason reason
+    );
+
+    /// @notice A one-shot {permitTransferFrom} executed. As with {AllowanceTransfer},
+    ///         `transferred` is encrypted and may be zero (over-cap or balance-short).
+    event PermitSpent(
+        address indexed owner,
+        address indexed to,
+        address indexed token,
+        address spender,
+        uint256 nonce,
+        euint64 transferred
+    );
+
     function setPermission(
         address token,
         address spender,
@@ -169,6 +244,25 @@ interface IRecurringAllowance {
 
     function transferFrom(TransferDetails[] calldata transfers) external;
 
+    function tryTransferFrom(TransferDetails[] calldata transfers) external returns (bool[] memory executed);
+
+    function permitSetPermission(
+        address owner,
+        PermitGrant calldata grant,
+        bytes calldata inputProof,
+        bytes calldata signature
+    ) external returns (uint256 permissionId);
+
+    function permitTransferFrom(
+        address owner,
+        PermitSpend calldata permit,
+        bytes calldata capProof,
+        externalEuint64 requested,
+        bytes calldata requestedProof,
+        address to,
+        bytes calldata signature
+    ) external returns (euint64 transferred);
+
     function getPermission(
         address user,
         address token,
@@ -184,4 +278,15 @@ interface IRecurringAllowance {
     ) external view returns (Permission memory);
 
     function getPermissionCount(address user, address token, address spender) external view returns (uint256);
+
+    /// @notice Number of (token, spender) pairs for which `user` has stored permissions.
+    function getGrantedPairCount(address user) external view returns (uint256);
+
+    /// @notice The (token, spender) pair at `index` (unstable order — swap-and-pop).
+    function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory);
+
+    /// @notice Every (token, spender) pair for which `user` has stored permissions.
+    ///         Entries may hold only EXPIRED permissions until a write prunes them —
+    ///         read the permissions themselves for freshness.
+    function getGrantedPairs(address user) external view returns (TokenSpenderPair[] memory);
 }
