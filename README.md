@@ -8,9 +8,12 @@ Reusable confidential (FHE) smart-contract primitives for the [Zama FHEVM](https
 
 Building Raycash, we kept rewriting the same low-level plumbing for that step. `confidential-primitives` is those pieces, pulled out of our own stack and hardened into standalone, reusable contracts. We built them for Raycash, but nothing here is Raycash-specific: if you're building on confidential tokens, they're meant to drop straight into your project.
 
-This is our first release, and we're starting with the primitive we reached for first: our wrap adapters. More will follow.
+Two primitives so far, and more will follow:
 
-## The adapters
+- **[Stealth wrap adapters](#the-stealth-wrap-adapters)** — get funds *into* the confidential world without linking the deposit to its recipient.
+- **[`RecurringAllowance`](#recurringallowance)** — let a spender pull funds on a budget ("100 USDC/day") without publishing the budget.
+
+## The stealth wrap adapters
 
 An [`ERC7984`](https://docs.openzeppelin.com/confidential-contracts/token) confidential token keeps balances and transfer amounts encrypted. That part is solved, and it works exactly as intended. Since most value already lives as ordinary ERC-20 (the USDC and USDT in circulation), the usual way for it to *become* confidential is to wrap: you deposit an ERC-20 and OpenZeppelin's [`ERC7984ERC20Wrapper`](https://docs.openzeppelin.com/confidential-contracts/token) mints the confidential equivalent one-for-one. That wrap happens in a single transaction through `wrap(to, amount)`. It keeps the on-ramp simple and cheap, but it leaves that one transaction publicly observable: `to` and `amount` are cleartext, so the chain records who received how much at the moment of entry. Everything after the wrap is private by design; the wrap itself is the only step on view.
 
@@ -30,7 +33,7 @@ Our adapters close that last gap, and without replacing anything: a stealth wrap
 
 These two are a starting point, not the whole space. `StealthWrapAdapter` is built to be extended: implement `finalizeWrap` over its escrow and delivery, and you can form the anonymity set your own way (time-windowed, tiered by amount, allowlist-scoped, whatever your threat model calls for). If you build one, we'd love to see it.
 
-## How it works
+### How it works
 
 1. Deploy or choose an `ERC7984ERC20Wrapper` for your ERC-20.
 2. Deploy a `ContinuousStealthWrapAdapter` or `BatchedStealthWrapAdapter` pointed at that confidential wrapper.
@@ -40,7 +43,7 @@ These two are a starting point, not the whole space. `StealthWrapAdapter` is bui
 
 The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20 once the recipient holds confidential balance.
 
-## Choosing an adapter
+### Choosing an adapter
 
 Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implementations of the abstract `StealthWrapAdapter` and share its escrow-and-deliver machinery. They differ only in how the anonymity set is formed, and that one difference cascades into privacy, liveness, and gas.
 
@@ -68,7 +71,7 @@ Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm
 
 Batched is cheaper at every size and scales to a full 48-slot set; continuous costs more per decoy and reverts at 48 here. The gap is that continuous does more encrypted work per deposit: it matches against an encrypted recipient and rewrites each scanned deposit's amount in storage, where batched matches a cleartext recipient and uses a plain `(batch, recipient)` nullifier. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
 
-## Privacy model
+### Privacy model
 
 Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this set of deposits (or this batch)." It does **not** reveal which of those deposits were `R`'s: each deposit's encrypted recipient is compared to `R` homomorphically (`FHE.eq`, under encryption) and selected obliviously, so the chain never learns the per-deposit match. It doesn't even reveal whether *any* deposit matched: the payout is an encrypted sum that can be zero. So `R`'s address is public at finalize, but it stays unlinkable to any individual deposit.
 
@@ -80,6 +83,42 @@ Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this s
 | Recipient at finalize | Public address argument, but matched homomorphically against every scanned deposit, so unlinkable to any of them |
 | Which deposits matched | Hidden (oblivious `FHE.select`) |
 | Amount delivered | Encrypted `euint64`; can be zero |
+
+## RecurringAllowance
+
+The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits — without publishing the limits.
+
+ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing: an operator can move **any** amount of your balance while approved. There is no `approve(spender, 100)` in confidential-token land — a cleartext allowance sitting next to an encrypted balance would leak the very numbers the balance math hides. `RecurringAllowance` fills that gap: you make the contract your operator once, then grant per-spender budgets here — "100 USDC per day", with the 100 encrypted. A spender can only move your funds through `transferFrom`, which enforces every budget homomorphically. Think Permit2's allowance module or a card's spending limit, for confidential tokens.
+
+- **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry.
+- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero — a denied spend is indistinguishable on-chain from a permitted one.
+- **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call.
+
+### How it works
+
+1. The user calls `setOperator(recurringAllowance, until)` on the ERC-7984 token (once; keep `until` beyond your permission windows).
+2. The user calls `setPermission(token, spender, encryptedLimit, proof, duration, startTime, endTime)`.
+3. The spender calls `transferFrom(from, to, encryptedAmount, proof, token)` — or the batch overload for many pulls in one transaction.
+4. The contract checks every active permission homomorphically, moves the encrypted amount (or zero) via `confidentialTransferFrom`, and credits `spent` with what the token reports actually moved.
+
+### Semantics that matter
+
+- **Budgets stack conjunctively.** Every active permission for a (user, token, spender) key must pass (AND logic), so "100/day AND 500/week" is just two `setPermission` calls. The corollary: adding a permission only ever *tightens* the allowance — to raise a limit, update the existing permission instead of adding one.
+- **Periods are fixed windows**, anchored at `startTime` (period `n` is `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding window. `spent` resets lazily at the first spend attempt in a new period. A spender straddling a boundary can move up to 2x the limit inside one `duration`-long span — inherent to fixed windows; size limits with that in mind.
+- **Allowance tracks value moved, not attempts.** `spent` is credited with the amount the token reports as actually transferred, so a pull against an insufficient balance consumes nothing and can be retried after a top-up.
+- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`) — which is public information anyway.
+- **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall — and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
+
+### Privacy model
+
+| Signal | Visibility |
+| --- | --- |
+| That a permission exists (user, token, spender) | Public |
+| Period shape (duration, start, expiry) | Public |
+| Limit and spent amounts | Encrypted; decryptable by the user **and the spender** — the spender needs to see its own budget, and an active spender could infer it by probing anyway |
+| Spend attempts (spender, from, to, when) | Public (the transaction, plus the token's own `ConfidentialTransfer` event) |
+| Spend amounts | Encrypted `euint64` |
+| Whether a spend was permitted or denied | Hidden on-chain: identical writes and events either way; the recipient learns the outcome from their balance |
 
 ## Install
 
@@ -93,6 +132,8 @@ Solidity consumers import the sources directly:
 import {ContinuousStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/adapters/ContinuousStealthWrapAdapter.sol";
 import {BatchedStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/adapters/BatchedStealthWrapAdapter.sol";
 import {IStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/interfaces/IStealthWrapAdapter.sol";
+import {RecurringAllowance} from "@raycashxyz/confidential-primitives/contracts/allowances/RecurringAllowance.sol";
+import {IRecurringAllowance} from "@raycashxyz/confidential-primitives/contracts/interfaces/IRecurringAllowance.sol";
 ```
 
 ## Develop

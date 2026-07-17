@@ -1,7 +1,7 @@
 {
   "name": "@raycashxyz/confidential-primitives",
   "version": "0.4.0",
-  "description": "Reusable confidential (FHE) smart-contract primitives for the Zama FHEVM: stealth wrap adapters that add recipient privacy to ERC-7984 wrapping.",
+  "description": "Reusable confidential (FHE) smart-contract primitives for the Zama FHEVM: stealth wrap adapters that add recipient privacy to ERC-7984 wrapping, and recurring encrypted allowances for scoped spending delegation.",
   "license": "MIT",
   "packageManager": "pnpm@10.18.3",
   "repository": {
