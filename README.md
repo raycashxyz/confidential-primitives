@@ -33,6 +33,8 @@ Our adapters close that last gap, and without replacing anything: a stealth wrap
 
 These two are a starting point, not the whole space. `StealthWrapAdapter` is built to be extended: implement `finalizeWrap` over its escrow and delivery, and you can form the anonymity set your own way (time-windowed, tiered by amount, allowlist-scoped, whatever your threat model calls for). If you build one, we'd love to see it.
 
+`BatchedStealthWrapAdapter` also supports a narrower extension: when only *how a deposit is acquired* changes, a derived adapter can reuse its batch, nullifier, and accounting machinery. Acquire the funds into escrow with `_wrapIntoEscrow(depositor, amount)`, then call `_recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, recipient)`. Both `initWrap` and `finalizeWrap` are virtual, so a derived adapter can replace either public entrypoint; an entrypoint that calls the escrow helper must remain `nonReentrant`.
+
 ### How it works
 
 1. Deploy or choose an `ERC7984ERC20Wrapper` for your ERC-20.
