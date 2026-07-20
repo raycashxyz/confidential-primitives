@@ -209,6 +209,9 @@ interface IRecurringAllowance {
         euint64 transferred
     );
 
+    /// @notice Grant `spender` an encrypted per-period spending budget on `token`.
+    ///         The caller must separately make this contract an ERC-7984 operator.
+    /// @return permissionId Stable id of the new permission.
     function setPermission(
         address token,
         address spender,
@@ -219,6 +222,9 @@ interface IRecurringAllowance {
         uint64 endTime
     ) external returns (uint256 permissionId);
 
+    /// @notice Modify an existing permission of the caller, addressed by (index, id).
+    ///         Zero-valued time fields and an empty `inputProof` mean "leave unchanged";
+    ///         changing the grid (`duration`/`startTime`) resets `spent`.
     function updatePermission(
         address token,
         address spender,
@@ -231,6 +237,7 @@ interface IRecurringAllowance {
         uint64 endTime
     ) external;
 
+    /// @notice Revoke one of the caller's permissions, addressed by (index, id).
     function invalidatePermission(
         address token,
         address spender,
@@ -238,12 +245,21 @@ interface IRecurringAllowance {
         uint256 permissionId
     ) external;
 
+    /// @notice Revoke every stored permission for each given (token, spender) pair.
     function lockdown(TokenSpenderPair[] calldata pairs) external;
 
+    /// @notice Invalidate all of the caller's outstanding permit signatures at once by
+    ///         bumping their {permitEpoch}. Signature-level counterpart to {lockdown}.
+    /// @return newEpoch The caller's epoch after the bump.
     function invalidateAllPermits() external returns (uint256 newEpoch);
 
+    /// @notice Current permit epoch for `owner`, mixed into every permit digest.
     function permitEpoch(address owner) external view returns (uint256);
 
+    /// @notice Spend `from`'s allowance: move up to encrypted `amount` of `token` to `to`
+    ///         if every active permission for (from, token, msg.sender) allows it. A denied
+    ///         spend moves an encrypted zero instead of reverting.
+    /// @return transferred Encrypted amount actually moved (transiently ACL'd to the caller).
     function transferFrom(
         address from,
         address to,
@@ -252,10 +268,18 @@ interface IRecurringAllowance {
         address token
     ) external returns (euint64 transferred);
 
+    /// @notice Atomic batch {transferFrom}: any cleartext revert reverts the whole batch.
     function transferFrom(TransferDetails[] calldata transfers) external;
 
+    /// @notice Lenient batch {transferFrom} for processors: items that fail a cleartext
+    ///         precondition are skipped ({TransferSkipped}) rather than reverting the batch.
+    /// @return executed Per-item flag: true if the token transfer was executed (its
+    ///         encrypted outcome may still be zero).
     function tryTransferFrom(TransferDetails[] calldata transfers) external returns (bool[] memory executed);
 
+    /// @notice Create a permission from `owner`'s off-chain {PermitGrant} signature (the
+    ///         gasless-grant flow — the named spender submits and pays gas).
+    /// @return permissionId Stable id of the new permission.
     function permitSetPermission(
         address owner,
         PermitGrant calldata grant,
@@ -263,6 +287,9 @@ interface IRecurringAllowance {
         bytes calldata signature
     ) external returns (uint256 permissionId);
 
+    /// @notice Execute an `owner`-signed one-shot transfer up to a signed encrypted cap (a
+    ///         "confidential cheque"); over-cap requests move an encrypted zero, obliviously.
+    /// @return transferred Encrypted amount actually moved (transiently ACL'd to the caller).
     function permitTransferFrom(
         address owner,
         PermitSpend calldata permit,
@@ -273,6 +300,8 @@ interface IRecurringAllowance {
         bytes calldata signature
     ) external returns (euint64 transferred);
 
+    /// @notice Permission at `permissionIndex` for the key. Indices are NOT stable across
+    ///         writes (swap-and-pop); re-address by the returned `id`.
     function getPermission(
         address user,
         address token,
@@ -280,6 +309,7 @@ interface IRecurringAllowance {
         uint256 permissionIndex
     ) external view returns (Permission memory);
 
+    /// @notice Permission with id `permissionId` for the key (linear scan).
     function getPermissionById(
         address user,
         address token,
@@ -287,6 +317,7 @@ interface IRecurringAllowance {
         uint256 permissionId
     ) external view returns (Permission memory);
 
+    /// @notice Number of permissions stored for the (user, token, spender) key.
     function getPermissionCount(address user, address token, address spender) external view returns (uint256);
 
     /// @notice Number of (token, spender) pairs for which `user` has stored permissions.

@@ -17,6 +17,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm compile # hardhat compile → validates the contracts + regenerates typed deployers
+      - run: pnpm typecheck # tsc over test/ + src/ (needs the deployers compile just generated)
       - run: pnpm test # vitest + tevm + fhevm-tevm-mocks (in-process FHEVM, no secrets needed)
 
   # Fails a PR that changes the package without a changeset.

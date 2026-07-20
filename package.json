@@ -18,7 +18,9 @@
     "solidity"
   ],
   "files": [
-    "contracts/**/*.sol",
+    "contracts/adapters/**/*.sol",
+    "contracts/allowances/**/*.sol",
+    "contracts/interfaces/**/*.sol",
     "LICENSE",
     "README.md"
   ],
@@ -27,6 +29,7 @@
   },
   "scripts": {
     "compile": "hardhat compile",
+    "typecheck": "tsc --noEmit --pretty false 2>&1 | grep -E '^(test|src|hardhat)' && exit 1 || exit 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:bench": "vitest run --config vitest.bench.config.ts",

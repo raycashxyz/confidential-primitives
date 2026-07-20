@@ -135,7 +135,8 @@ export function useAllowanceSuite () {
 
   /** Make the RecurringAllowance contract an ERC-7984 operator for `who` (~100y). */
   const approveOperator = async (who: WalletWithAccount) => {
-    const until = await now() + 3_153_600_000n; // fits uint48
+    // ERC-7984 `until` is uint48 — viem types it as `number`.
+    const until = Number(await now()) + 3_153_600_000;
     await sendOk(token.write.setOperator([allowance.address, until], txOpts(who.account)));
   };
 

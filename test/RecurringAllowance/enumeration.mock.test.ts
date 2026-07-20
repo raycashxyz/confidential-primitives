@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getAddress, parseEventLogs } from "viem";
 
+import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts } from "../setup/tx";
 import { useAllowanceSuite } from "./setup/suite";
 
@@ -79,6 +80,12 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
       limit: 50n
     });
     expect(await allowance.read.getGrantedPairCount([user])).toBe(1n);
+
+    // getGrantedPairAt reverts cleanly (not a bare panic) past the end.
+    await assertRevertsWith(
+      allowance.read.getGrantedPairAt([user, 1n]),
+      "PermissionNotFound",
+    );
   });
 
   it("unlists a pair whose only permission expired and got pruned by a lenient spend", async () => {

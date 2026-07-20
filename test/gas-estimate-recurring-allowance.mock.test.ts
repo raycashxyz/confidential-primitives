@@ -129,8 +129,9 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
           inputProof
         ], fheTxOpts(alice.account)), "mint");
         const { timestamp } = await publicClient.getBlock({ blockTag: "latest" });
+        // ERC-7984 `until` is uint48 — viem types it as `number`.
         await sendOk(
-          token.write.setOperator([allowance.address, timestamp + 3_153_600_000n], fheTxOpts(alice.account)),
+          token.write.setOperator([allowance.address, Number(timestamp) + 3_153_600_000], fheTxOpts(alice.account)),
           "setOperator",
         );
       }

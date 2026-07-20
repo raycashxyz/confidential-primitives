@@ -116,7 +116,7 @@ describe("RecurringAllowance: ERC-1271 signers and cross-account replay", () => 
     const { handle, inputProof } = await encAmount(token.address, alice.account.address, amount);
     await sendOk(token.write.mint([wallet.address, handle, inputProof], fheTxOpts(alice.account)));
 
-    const until = (await now()) + 3_153_600_000n;
+    const until = Number(await now()) + 3_153_600_000; // uint48
     const setOperatorData = encodeFunctionData({
       abi: token.abi,
       functionName: "setOperator",

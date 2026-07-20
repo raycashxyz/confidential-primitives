@@ -60,6 +60,19 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(await S.decryptAllowanceHandle(permission.limit, bob)).toBe(1000n);
     expect(await S.decryptAllowanceHandle(permission.spent, alice)).toBe(0n);
     expect(await S.decryptAllowanceHandle(permission.spent, bob)).toBe(0n);
+
+    // A SECOND permission under the same key: the contract skips re-granting the shared
+    // encrypted-zero to save gas, so this checks the spender can still decrypt its
+    // freshly-created (still-zero) spent — i.e. the optimization didn't under-grant.
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+    const second = await S.getPermission(alice.account.address, bob.account.address, 1n);
+    expect(await S.decryptAllowanceHandle(second.limit, bob)).toBe(500n);
+    expect(await S.decryptAllowanceHandle(second.spent, alice)).toBe(0n);
+    expect(await S.decryptAllowanceHandle(second.spent, bob)).toBe(0n);
   });
 
   it("validates addresses and the time window on creation", async () => {
