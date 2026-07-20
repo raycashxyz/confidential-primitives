@@ -73,7 +73,8 @@ interface IRecurringAllowance {
         uint64 duration;
         uint64 startTime;
         uint64 endTime;
-        /// @dev Unordered nonce (see {UnorderedNonces}).
+        /// @dev Unordered nonce (see {UnorderedNonces}). PermitGrant and PermitSpend draw
+        ///      from the SAME per-owner nonce space — allocate from one shared sequence.
         uint256 nonce;
         /// @dev Signature expiry — the permit cannot be submitted after this timestamp.
         uint256 sigDeadline;
@@ -91,6 +92,8 @@ interface IRecurringAllowance {
         bytes32 capHandle;
         /// @dev Bound recipient; address(0) lets the spender choose at execution.
         address to;
+        /// @dev Unordered nonce (see {UnorderedNonces}). Shares the per-owner nonce space
+        ///      with PermitGrant — allocate from one shared sequence.
         uint256 nonce;
         uint256 sigDeadline;
     }
