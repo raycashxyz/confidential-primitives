@@ -4,11 +4,11 @@ export default defineConfig({
   test: {
     // Every *.mock.test.ts runs on the tevm harness (test/setup/*).
     include: ["test/**/*.mock.test.ts"],
-    // The 4-way finalize gas benchmark boots ~6 environments and runs hundreds of FHE txs
-    // (~2.5min). It's a benchmark, not a correctness gate — keep it out of `pnpm test` and
-    // run it on demand via `pnpm test:bench`. Extend (don't replace) vitest's default
+    // The gas benchmarks boot several environments and run hundreds of FHE txs (~minutes).
+    // They're benchmarks, not correctness gates — keep them out of `pnpm test` and run
+    // them on demand via `pnpm test:bench`. Extend (don't replace) vitest's default
     // excludes so node_modules/dist/cache globs stay ignored.
-    exclude: [...configDefaults.exclude, "test/gas-estimate-batched.mock.test.ts"],
+    exclude: [...configDefaults.exclude, "test/gas-estimate-*.mock.test.ts"],
     testTimeout: 120_000,
     hookTimeout: 120_000,
     // Run test files in parallel across worker processes (default pool: forks). Each file
