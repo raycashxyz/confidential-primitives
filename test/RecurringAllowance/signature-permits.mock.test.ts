@@ -10,6 +10,11 @@ import type { PermitGrantMessage, PermitSpendMessage } from "./setup/suite";
 describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   const S = useAllowanceSuite();
 
+  // The struct passed to the contract call (no owner/epoch — those are bound at
+  // verification from the function arg and on-chain storage, not the calldata struct).
+  type GrantStruct = Omit<PermitGrantMessage, "owner" | "epoch">;
+  type SpendStruct = Omit<PermitSpendMessage, "owner" | "epoch">;
+
   /** Owner-side of the gasless-grant handshake: encrypt the limit BOUND TO THE SPENDER. */
   const makeGrant = async (params: {
     owner: "alice";
@@ -19,13 +24,13 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     startTime?: bigint;
     endTime?: bigint;
     nonce?: bigint;
+    epoch?: bigint;
     sigDeadline?: bigint;
   }) => {
     const { H, token, allowance } = S.ctx();
     const owner = H.wallets[params.owner];
-    // The owner registers the ciphertext with the SPENDER as bound submitter.
     const { handle, inputProof } = await S.encAmount(allowance.address, params.spender, params.limit);
-    const message: PermitGrantMessage = {
+    const grant: GrantStruct = {
       token: token.address,
       spender: params.spender,
       limitHandle: handle,
@@ -35,9 +40,14 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       nonce: params.nonce ?? 0n,
       sigDeadline: params.sigDeadline ?? (await S.now()) + 3600n
     };
-    const signature = await S.signPermitGrant(owner, message);
+    const epoch = params.epoch ?? (await allowance.read.permitEpoch([owner.account.address]));
+    const signature = await S.signPermitGrant(owner, {
+      owner: owner.account.address,
+      epoch,
+      ...grant
+    });
     return {
-      message,
+      grant,
       inputProof,
       signature
     };
@@ -49,12 +59,13 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     cap: bigint;
     to?: Hex;
     nonce?: bigint;
+    epoch?: bigint;
     sigDeadline?: bigint;
   }) => {
     const { H, token, allowance } = S.ctx();
     const owner = H.wallets[params.owner];
     const { handle, inputProof } = await S.encAmount(allowance.address, params.spender, params.cap);
-    const message: PermitSpendMessage = {
+    const permit: SpendStruct = {
       token: token.address,
       spender: params.spender,
       capHandle: handle,
@@ -62,9 +73,14 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       nonce: params.nonce ?? 0n,
       sigDeadline: params.sigDeadline ?? (await S.now()) + 3600n
     };
-    const signature = await S.signPermitSpend(owner, message);
+    const epoch = params.epoch ?? (await allowance.read.permitEpoch([owner.account.address]));
+    const signature = await S.signPermitSpend(owner, {
+      owner: owner.account.address,
+      epoch,
+      ...permit
+    });
     return {
-      message,
+      permit,
       capProof: inputProof,
       signature
     };
@@ -75,7 +91,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     const { alice, bob, carol } = H.wallets;
 
     await S.fundUser(alice, 10_000n);
-    const { message, inputProof, signature } = await makeGrant({
+    const { grant, inputProof, signature } = await makeGrant({
       owner: "alice",
       spender: bob.account.address,
       limit: 500n
@@ -84,7 +100,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     // BOB submits — alice signs only.
     const receipt = await S.sendOk(allowance.write.permitSetPermission([
       alice.account.address,
-      message,
+      grant,
       inputProof,
       signature
     ], fheTxOpts(bob.account)));
@@ -118,18 +134,22 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     const { alice, bob, carol } = H.wallets;
 
     await S.fundUser(alice, 10_000n);
-    const { message, inputProof, signature } = await makeGrant({
+    const { grant, inputProof, signature } = await makeGrant({
       owner: "alice",
       spender: bob.account.address,
       limit: 500n
     });
 
-    // Signed by bob, claimed to be from alice -> InvalidSigner.
-    const bobSignature = await S.signPermitGrant(bob, message);
+    // Signed by bob but claimed from alice -> InvalidSigner (bob signs the same message).
+    const bobSignature = await S.signPermitGrant(bob, {
+      owner: alice.account.address,
+      epoch: 0n,
+      ...grant
+    });
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
-        message,
+        grant,
         inputProof,
         bobSignature
       ], txOpts(bob.account)),
@@ -140,7 +160,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
-        message,
+        grant,
         inputProof,
         signature
       ], txOpts(carol.account)),
@@ -158,7 +178,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
-        expired.message,
+        expired.grant,
         expired.inputProof,
         expired.signature
       ], txOpts(bob.account)),
@@ -168,14 +188,14 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     // Valid submission consumes the nonce; replay -> InvalidNonce.
     await S.sendOk(allowance.write.permitSetPermission([
       alice.account.address,
-      message,
+      grant,
       inputProof,
       signature
     ], fheTxOpts(bob.account)));
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
-        message,
+        grant,
         inputProof,
         signature
       ], txOpts(bob.account)),
@@ -188,7 +208,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     const { alice, bob } = H.wallets;
 
     await S.fundUser(alice, 10_000n);
-    const { message, inputProof, signature } = await makeGrant({
+    const { grant, inputProof, signature } = await makeGrant({
       owner: "alice",
       spender: bob.account.address,
       limit: 500n,
@@ -201,12 +221,118 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
-        message,
+        grant,
         inputProof,
         signature
       ], txOpts(bob.account)),
       "InvalidNonce",
     );
+  });
+
+  it("honors unordered nonces across a word boundary (nonce >= 256)", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    await S.fundUser(alice, 10_000n);
+    // nonce 300 = word 1, bit 44.
+    const { grant, inputProof, signature } = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 500n,
+      nonce: 300n
+    });
+
+    await S.sendOk(allowance.write.permitSetPermission([
+      alice.account.address,
+      grant,
+      inputProof,
+      signature
+    ], fheTxOpts(bob.account)));
+    expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(1n);
+
+    // Word 1 now has bit 44 set; a fresh nonce in the same word still works.
+    const second = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 200n,
+      nonce: 301n
+    });
+    await S.sendOk(allowance.write.permitSetPermission([
+      alice.account.address,
+      second.grant,
+      second.inputProof,
+      second.signature
+    ], fheTxOpts(bob.account)));
+    expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(2n);
+  });
+
+  it("invalidateAllPermits cancels every outstanding grant and cheque at once", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    await S.fundUser(alice, 10_000n);
+    // Two independent signatures at the current epoch (0).
+    const grant = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 500n,
+      nonce: 1n
+    });
+    const cheque = await makeCheque({
+      owner: "alice",
+      spender: bob.account.address,
+      cap: 500n,
+      nonce: 2n
+    });
+
+    // Alice bumps her permit epoch.
+    const receipt = await S.sendOk(allowance.write.invalidateAllPermits(txOpts(alice.account)));
+    const [event] = parseEventLogs({
+      abi: allowance.abi,
+      logs: receipt.logs,
+      eventName: "PermitEpochIncremented"
+    });
+    expect(event.args.newEpoch).toBe(1n);
+    expect(await allowance.read.permitEpoch([alice.account.address])).toBe(1n);
+
+    // Both epoch-0 signatures now fail verification (digest binds the current epoch).
+    await assertRevertsWith(
+      allowance.write.permitSetPermission([
+        alice.account.address,
+        grant.grant,
+        grant.inputProof,
+        grant.signature
+      ], txOpts(bob.account)),
+      "InvalidSigner",
+    );
+    const requested = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.permitTransferFrom([
+        alice.account.address,
+        cheque.permit,
+        cheque.capProof,
+        requested.handle,
+        requested.inputProof,
+        carol.account.address,
+        cheque.signature
+      ], txOpts(bob.account)),
+      "InvalidSigner",
+    );
+
+    // A freshly signed permit at the new epoch works again.
+    const fresh = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 500n,
+      nonce: 3n
+    });
+    await S.sendOk(allowance.write.permitSetPermission([
+      alice.account.address,
+      fresh.grant,
+      fresh.inputProof,
+      fresh.signature
+    ], fheTxOpts(bob.account)));
+    expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(1n);
   });
 
   it("executes a one-shot cheque up to the signed cap, obliviously", async () => {
@@ -221,10 +347,10 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     });
 
     // Bob requests 300 (within the cap) to carol.
-    const requested = await S.encAmount(S.ctx().allowance.address, bob.account.address, 300n);
+    const requested = await S.encAmount(allowance.address, bob.account.address, 300n);
     const receipt = await S.sendOk(allowance.write.permitTransferFrom([
       alice.account.address,
-      cheque.message,
+      cheque.permit,
       cheque.capProof,
       requested.handle,
       requested.inputProof,
@@ -251,7 +377,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     await assertRevertsWith(
       allowance.write.permitTransferFrom([
         alice.account.address,
-        cheque.message,
+        cheque.permit,
         cheque.capProof,
         requested2.handle,
         requested2.inputProof,
@@ -276,7 +402,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     const requested = await S.encAmount(allowance.address, bob.account.address, 900n); // over cap
     await S.sendOk(allowance.write.permitTransferFrom([
       alice.account.address,
-      cheque.message,
+      cheque.permit,
       cheque.capProof,
       requested.handle,
       requested.inputProof,
@@ -310,7 +436,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     await assertRevertsWith(
       allowance.write.permitTransferFrom([
         alice.account.address,
-        cheque.message,
+        cheque.permit,
         cheque.capProof,
         requested.handle,
         requested.inputProof,
@@ -323,7 +449,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     // ...cashing it to carol works.
     await S.sendOk(allowance.write.permitTransferFrom([
       alice.account.address,
-      cheque.message,
+      cheque.permit,
       cheque.capProof,
       requested.handle,
       requested.inputProof,
@@ -338,7 +464,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     const { alice, bob } = H.wallets;
 
     await S.fundUser(alice, 10_000n);
-    const { message, inputProof, signature } = await makeGrant({
+    const { grant, inputProof, signature } = await makeGrant({
       owner: "alice",
       spender: bob.account.address,
       limit: 100n
@@ -350,7 +476,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       allowance.write.permitSetPermission([
         alice.account.address,
         {
-          ...message,
+          ...grant,
           limitHandle: forged.handle
         },
         forged.inputProof,
@@ -364,7 +490,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       allowance.write.permitSetPermission([
         alice.account.address,
         {
-          ...message,
+          ...grant,
           duration: DAY * 30n
         },
         inputProof,

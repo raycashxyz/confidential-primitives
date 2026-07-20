@@ -118,7 +118,7 @@ Two flows:
 - **`permitSetPermission`** — gasless grants. The owner signs a `PermitGrant`; the spender submits it and pays the gas; the result is a completely normal permission. Granting a subscription budget costs the user zero transactions.
 - **`permitTransferFrom`** — one-shot transfers up to a signed encrypted cap, optionally bound to a recipient: a *confidential cheque*. The spender chooses the actual amount at execution; over-cap requests move an encrypted zero, obliviously.
 
-Nonces are Permit2-style unordered bitmaps: any number of permits can be outstanding, and `invalidateUnorderedNonces` cancels signed-but-unsubmitted ones in bulk. Signatures verify via ECDSA or ERC-1271 (smart accounts).
+Nonces are Permit2-style unordered bitmaps: any number of permits can be outstanding. To cancel signatures you haven't submitted yet, `invalidateUnorderedNonces` burns specific nonces, and `invalidateAllPermits` bumps a per-owner epoch that invalidates **every** outstanding permit at once (the signature-level counterpart to `lockdown`, which only revokes *stored* permissions). Signatures verify via ECDSA or ERC-1271, and the owner address is bound into the signed digest so a signature authorizing one smart account can't be replayed against a sibling account that shares its signer.
 
 Two caveats to design around:
 
@@ -133,10 +133,10 @@ Every active permission on a key adds a fixed amount of encrypted work to each `
 
 | Active permissions `N` | `transferFrom` gas |
 | ---: | ---: |
-| 1 | 581,489 |
-| 2 | 682,246 |
-| 4 | 878,159 |
-| 8 | 1,269,988 |
+| 1 | 584,307 |
+| 2 | 682,136 |
+| 4 | 877,793 |
+| 8 | 1,246,686 |
 
 A denied spend costs exactly the same as a permitted one — same op sequence, so gas is not a side channel on the outcome. The benchmark asserts this.
 

@@ -68,11 +68,16 @@ import {UnorderedNonces} from "./base/UnorderedNonces.sol";
  *         only touch its own keys.
  */
 contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, ReentrancyGuard, EIP712, UnorderedNonces {
+    // `owner` is signed (not just a call argument) so an ERC-1271 wallet sharing a signer
+    // with another account cannot have its signature replayed against that sibling — the
+    // digest is account-specific. `epoch` lets an owner invalidate every outstanding
+    // signature at once (see {invalidateAllPermits}); the contract mixes in the CURRENT
+    // on-chain epoch, so a bump makes prior signatures fail verification.
     bytes32 public constant PERMIT_GRANT_TYPEHASH = keccak256(
-        "PermitGrant(address token,address spender,bytes32 limitHandle,uint64 duration,uint64 startTime,uint64 endTime,uint256 nonce,uint256 sigDeadline)"
+        "PermitGrant(address owner,address token,address spender,bytes32 limitHandle,uint64 duration,uint64 startTime,uint64 endTime,uint256 nonce,uint256 epoch,uint256 sigDeadline)"
     );
     bytes32 public constant PERMIT_SPEND_TYPEHASH = keccak256(
-        "PermitSpend(address token,address spender,bytes32 capHandle,address to,uint256 nonce,uint256 sigDeadline)"
+        "PermitSpend(address owner,address token,address spender,bytes32 capHandle,address to,uint256 nonce,uint256 epoch,uint256 sigDeadline)"
     );
     /// @notice Hard cap on live permissions per (user, token, spender) key.
     /// @dev Every active permission adds ~6 FHE ops to each {transferFrom} for the key,
@@ -98,6 +103,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /// @dev Ids start at 1 so 0 never names a permission.
     uint256 private _nextPermissionId = 1;
+
+    /// @notice Per-owner permit epoch, mixed into every permit digest. Bumping it (via
+    ///         {invalidateAllPermits}) invalidates all of the owner's outstanding
+    ///         signatures at once. Starts at 0.
+    mapping(address owner => uint256) public permitEpoch;
 
     constructor() EIP712("RecurringAllowance", "1") {
         E_ZERO = FHE.asEuint64(0);
@@ -129,8 +139,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint64 startTime,
         uint64 endTime
     ) external returns (uint256 permissionId) {
+        // Cleartext validation BEFORE fromExternal so an invalid window / 9th permission
+        // reverts without paying for encrypted-input proof verification.
+        bool firstPermission;
+        (duration, startTime, endTime, firstPermission) =
+            _validateNewPermission(msg.sender, token, spender, duration, startTime, endTime);
         euint64 eLimit = FHE.fromExternal(limit, inputProof);
-        permissionId = _createPermission(msg.sender, token, spender, eLimit, duration, startTime, endTime);
+        permissionId = _finalizeCreate(msg.sender, token, spender, eLimit, duration, startTime, endTime, firstPermission);
     }
 
     /**
@@ -161,28 +176,29 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         _useUnorderedNonce(owner, grant.nonce);
         _verifyPermitGrant(owner, grant, signature);
 
+        bool firstPermission;
+        uint64 duration;
+        uint64 startTime;
+        uint64 endTime;
+        (duration, startTime, endTime, firstPermission) =
+            _validateNewPermission(owner, grant.token, grant.spender, grant.duration, grant.startTime, grant.endTime);
         euint64 eLimit = FHE.fromExternal(externalEuint64.wrap(grant.limitHandle), inputProof);
-        permissionId = _createPermission(
-            owner,
-            grant.token,
-            grant.spender,
-            eLimit,
-            grant.duration,
-            grant.startTime,
-            grant.endTime
-        );
+        permissionId = _finalizeCreate(owner, grant.token, grant.spender, eLimit, duration, startTime, endTime, firstPermission);
     }
 
-    /// @dev Shared creation path for {setPermission} and {permitSetPermission}.
-    function _createPermission(
+    /// @dev Cleartext half of permission creation, shared by {setPermission} and
+    ///      {permitSetPermission}. Resolves the zero-sentinels, validates the window and
+    ///      the per-key cap, prunes expired entries, and reports whether this will be the
+    ///      first live permission under the key. Runs BEFORE any `FHE.fromExternal` so a
+    ///      cleartext revert never pays for proof verification.
+    function _validateNewPermission(
         address user,
         address token,
         address spender,
-        euint64 eLimit,
         uint64 duration,
         uint64 startTime,
         uint64 endTime
-    ) private returns (uint256 permissionId) {
+    ) private returns (uint64, uint64, uint64, bool firstPermission) {
         if (token == address(0)) revert InvalidTokenAddress();
         if (spender == address(0)) revert InvalidSpenderAddress();
 
@@ -194,16 +210,37 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         Permission[] storage permissions = _permissions[user][token][spender];
         _pruneExpired(permissions);
         if (permissions.length >= MAX_PERMISSIONS) revert TooManyPermissions();
+        firstPermission = permissions.length == 0;
 
+        return (duration, startTime, endTime, firstPermission);
+    }
+
+    /// @dev Encrypted half of permission creation: grant ACL, append, emit. The E_ZERO
+    ///      grants and the pair-tracking are only needed once per key — E_ZERO is a single
+    ///      shared handle and ACL grants are permanent, so re-granting on a 2nd/3rd tier is
+    ///      pure redundant external work.
+    function _finalizeCreate(
+        address user,
+        address token,
+        address spender,
+        euint64 eLimit,
+        uint64 duration,
+        uint64 startTime,
+        uint64 endTime,
+        bool firstPermission
+    ) private returns (uint256 permissionId) {
         FHE.allowThis(eLimit);
         FHE.allow(eLimit, user);
         FHE.allow(eLimit, spender);
-        // Let both parties decrypt the initial (and any reset) spent value.
-        FHE.allow(E_ZERO, user);
-        FHE.allow(E_ZERO, spender);
+        if (firstPermission) {
+            // Let both parties decrypt the initial (and any reset) spent value.
+            FHE.allow(E_ZERO, user);
+            FHE.allow(E_ZERO, spender);
+            _trackPair(user, token, spender);
+        }
 
         permissionId = _nextPermissionId++;
-        permissions.push(
+        _permissions[user][token][spender].push(
             Permission({
                 id: permissionId,
                 limit: eLimit,
@@ -214,7 +251,6 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
                 duration: duration
             })
         );
-        _trackPair(user, token, spender);
 
         emit PermissionSet(user, token, spender, permissionId, eLimit, duration, startTime, endTime);
     }
@@ -223,12 +259,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @notice Modify an existing permission. Zero-valued parameters mean "leave unchanged"
      *         (to actually set a field to its "unlimited" value, pass `type(uint64).max`;
      *         to skip the limit, pass an empty `inputProof`).
-     * @dev Changing `duration` or `startTime` re-anchors the period grid, so `spent`
-     *      resets and a fresh period starts — otherwise the old grid's spend history
-     *      would be measured against the new grid (and a future `startTime` would make
-     *      the reset math underflow). Changing only `limit` keeps the current period's
-     *      `spent`: lowering the limit below what is already spent simply blocks further
-     *      spending until the next reset.
+     * @dev Changing `duration` or `startTime` to a DIFFERENT value re-anchors the period
+     *      grid, so `spent` resets — otherwise the old grid's spend history would be
+     *      measured against the new grid (and a future `startTime` would make the reset
+     *      math underflow). Re-submitting the SAME value is a no-op and does NOT reset,
+     *      so a wallet echoing back a full record can't silently refresh the budget.
+     *      Changing only `limit` keeps the current period's `spent`: lowering the limit
+     *      below what is already spent simply blocks further spending until the next reset.
      *      The permission is addressed by (index, id): indices move under swap-and-pop,
      *      so the id guard makes a stale index revert instead of hitting a neighbour.
      */
@@ -257,11 +294,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         }
 
         bool gridChanged;
-        if (duration != 0) {
+        if (duration != 0 && duration != permission.duration) {
             permission.duration = duration;
             gridChanged = true;
         }
-        if (startTime != 0) {
+        if (startTime != 0 && startTime != permission.startTime) {
             permission.startTime = startTime;
             gridChanged = true;
         }
@@ -274,7 +311,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
         if (gridChanged) {
             permission.spent = E_ZERO;
-            permission.lastUpdated = permission.startTime;
+            // Anchor accounting so `spent` is fresh for the CURRENT grid period and does
+            // not immediately re-reset: clamp to now for a started grid, or to startTime
+            // while future-dated (keeps the startTime <= lastUpdated invariant).
+            permission.lastUpdated =
+                permission.startTime > uint64(block.timestamp) ? permission.startTime : uint64(block.timestamp);
         }
 
         emit PermissionUpdated(
@@ -305,7 +346,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (permissionIndex >= permissions.length) revert PermissionNotFound(permissionIndex);
         if (permissions[permissionIndex].id != permissionId) revert PermissionMismatch(permissionId);
 
-        permissions[permissionIndex] = permissions[permissions.length - 1];
+        uint256 lastIndex = permissions.length - 1;
+        if (permissionIndex != lastIndex) permissions[permissionIndex] = permissions[lastIndex];
         permissions.pop();
         if (permissions.length == 0) _untrackPair(msg.sender, token, spender);
 
@@ -313,11 +355,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Revoke every permission for each given (token, spender) pair in one call.
-     * @dev The panic button. Note it cannot revoke the operator status this contract
-     *      holds on the token (do that on the token if you want belt and braces), and
-     *      FHE decryption rights already granted on past handles are not revocable —
-     *      the spender keeps being able to read the historical limits it already knew.
+     * @notice Revoke every STORED permission for each given (token, spender) pair in one call.
+     * @dev The panic button — but scoped to stored permissions. It does NOT cancel
+     *      signed-but-unsubmitted {PermitGrant}/{PermitSpend} signatures (call
+     *      {invalidateAllPermits} for those), cannot revoke the operator status this
+     *      contract holds on the token (do that on the token for belt and braces), and
+     *      cannot revoke FHE decryption rights already granted on past handles — the
+     *      spender keeps being able to read the historical limits it already knew.
      */
     function lockdown(TokenSpenderPair[] calldata pairs) external {
         for (uint256 i = 0; i < pairs.length; i++) {
@@ -325,6 +369,20 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             _untrackPair(msg.sender, pairs[i].token, pairs[i].spender);
             emit Lockdown(msg.sender, pairs[i].token, pairs[i].spender);
         }
+    }
+
+    /**
+     * @notice Invalidate EVERY outstanding permit signature for `msg.sender` at once by
+     *         bumping their {permitEpoch}. Complements {lockdown}: lockdown revokes stored
+     *         permissions for specific pairs; this cancels signed-but-unsubmitted
+     *         {PermitGrant}/{PermitSpend} signatures (which lockdown cannot see, since a
+     *         signature lives off-chain until submitted). To cancel one specific permit
+     *         instead, use {invalidateUnorderedNonces}.
+     * @return newEpoch The owner's epoch after the bump
+     */
+    function invalidateAllPermits() external returns (uint256 newEpoch) {
+        newEpoch = ++permitEpoch[msg.sender];
+        emit PermitEpochIncremented(msg.sender, newEpoch);
     }
 
     /**
@@ -464,8 +522,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint256 permissionId
     ) external view returns (Permission memory) {
         Permission[] storage permissions = _permissions[user][token][spender];
-        for (uint256 i = 0; i < permissions.length; i++) {
+        uint256 len = permissions.length;
+        for (uint256 i = 0; i < len; ) {
             if (permissions[i].id == permissionId) return permissions[i];
+            unchecked { ++i; }
         }
         revert PermissionNotFound(permissionId);
     }
@@ -479,6 +539,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory) {
+        if (index >= _grantedPairs[user].length) revert PermissionNotFound(index);
         return _grantedPairs[user][index];
     }
 
@@ -572,7 +633,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         while (i < count) {
             Permission storage permission = permissions[i];
             if (nowTs > permission.endTime) {
-                permissions[i] = permissions[count - 1];
+                uint256 lastIndex = count - 1;
+                if (i != lastIndex) permissions[i] = permissions[lastIndex];
                 permissions.pop();
                 count--; // the swapped-in element now sits at i — re-examine it
             } else if (nowTs < permission.startTime) {
@@ -606,18 +668,20 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     function _recordSpend(address user, address token, address spender, euint64 transferredAmount) private {
         Permission[] storage permissions = _permissions[user][token][spender];
         uint64 nowTs = uint64(block.timestamp);
-        for (uint256 i = 0; i < permissions.length; i++) {
+        uint256 len = permissions.length; // stable here: no prune/pop on this path
+        for (uint256 i = 0; i < len; ) {
             Permission storage permission = permissions[i];
-            // Mirror _checkPermissions' active set: expired ones were pruned there,
+            // Mirror _evaluatePermissions' active set: expired ones were pruned there,
             // not-yet-started ones were excluded from the check so must not be touched.
-            if (nowTs < permission.startTime) continue;
-
-            euint64 newSpent = FHE.add(permission.spent, transferredAmount);
-            permission.spent = newSpent;
-            permission.lastUpdated = nowTs;
-            FHE.allowThis(newSpent);
-            FHE.allow(newSpent, user);
-            FHE.allow(newSpent, spender);
+            if (nowTs >= permission.startTime) {
+                euint64 newSpent = FHE.add(permission.spent, transferredAmount);
+                permission.spent = newSpent;
+                permission.lastUpdated = nowTs;
+                FHE.allowThis(newSpent);
+                FHE.allow(newSpent, user);
+                FHE.allow(newSpent, spender);
+            }
+            unchecked { ++i; }
         }
     }
 
@@ -643,11 +707,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // Shared helpers
     // -----------------------------------------------------------------------
 
-    /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271).
+    /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271). Binds `owner` and
+    ///      the current {permitEpoch} into the digest (see the type-hash note).
     function _verifyPermitGrant(address owner, PermitGrant calldata grant, bytes calldata signature) private view {
         bytes32 structHash = keccak256(
             abi.encode(
                 PERMIT_GRANT_TYPEHASH,
+                owner,
                 grant.token,
                 grant.spender,
                 grant.limitHandle,
@@ -655,28 +721,32 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
                 grant.startTime,
                 grant.endTime,
                 grant.nonce,
+                permitEpoch[owner],
                 grant.sigDeadline
             )
         );
-        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
+        if (!SignatureChecker.isValidSignatureNowCalldata(owner, _hashTypedDataV4(structHash), signature)) {
             revert InvalidSigner();
         }
     }
 
-    /// @dev EIP-712 verification for {PermitSpend} (ECDSA or ERC-1271).
+    /// @dev EIP-712 verification for {PermitSpend} (ECDSA or ERC-1271). Binds `owner` and
+    ///      the current {permitEpoch} into the digest (see the type-hash note).
     function _verifyPermitSpend(address owner, PermitSpend calldata permit, bytes calldata signature) private view {
         bytes32 structHash = keccak256(
             abi.encode(
                 PERMIT_SPEND_TYPEHASH,
+                owner,
                 permit.token,
                 permit.spender,
                 permit.capHandle,
                 permit.to,
                 permit.nonce,
+                permitEpoch[owner],
                 permit.sigDeadline
             )
         );
-        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
+        if (!SignatureChecker.isValidSignatureNowCalldata(owner, _hashTypedDataV4(structHash), signature)) {
             revert InvalidSigner();
         }
     }
@@ -715,13 +785,16 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     /// @dev Swap-and-pop every expired permission (endTime is inclusive).
     function _pruneExpired(Permission[] storage permissions) private {
         uint64 nowTs = uint64(block.timestamp);
+        uint256 count = permissions.length;
         uint256 i = 0;
-        while (i < permissions.length) {
+        while (i < count) {
             if (nowTs > permissions[i].endTime) {
-                permissions[i] = permissions[permissions.length - 1];
+                uint256 lastIndex = count - 1;
+                if (i != lastIndex) permissions[i] = permissions[lastIndex];
                 permissions.pop();
+                count--; // re-examine the element swapped into slot i
             } else {
-                i++;
+                unchecked { ++i; }
             }
         }
     }

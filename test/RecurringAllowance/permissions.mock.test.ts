@@ -193,6 +193,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
       amount: 200n
     });
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(200n);
+    const before = await S.getPermission(alice.account.address, bob.account.address, 0n);
 
     await S.sendOk(allowance.write.updatePermission([
       token.address,
@@ -206,10 +207,54 @@ describe("RecurringAllowance: permission lifecycle", () => {
       0n
     ], fheTxOpts(alice.account)));
 
+    const blockTimestamp = await S.now();
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(updated.duration).toBe(WEEK);
     expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(0n); // reset
-    expect(updated.lastUpdated).toBe(updated.startTime);
+    // startTime is unchanged; lastUpdated re-anchors to now (>= startTime) so `spent` is
+    // fresh for the current grid period and does not immediately re-reset on next spend.
+    expect(updated.startTime).toBe(before.startTime);
+    expect(updated.lastUpdated).toBe(blockTimestamp);
+    expect(updated.lastUpdated).toBeGreaterThanOrEqual(updated.startTime);
+  });
+
+  it("does NOT reset spent when duration/startTime are re-submitted unchanged", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    await S.fundUser(alice, 10_000n);
+    const { permissionId } = await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n,
+      duration: DAY
+    });
+    await S.spend({
+      spender: bob,
+      from: alice.account.address,
+      to: carol.account.address,
+      amount: 200n
+    });
+
+    const before = await S.getPermission(alice.account.address, bob.account.address, 0n);
+
+    // A wallet echoes back the FULL current record (same duration and startTime, both
+    // nonzero). This must be a no-op for the grid — not a silent budget refresh.
+    await S.sendOk(allowance.write.updatePermission([
+      token.address,
+      bob.account.address,
+      0n,
+      permissionId,
+      zeroHash,
+      "0x",
+      before.duration, // unchanged
+      before.startTime, // unchanged
+      before.endTime // unchanged
+    ], fheTxOpts(alice.account)));
+
+    const after = await S.getPermission(alice.account.address, bob.account.address, 0n);
+    expect(await S.decryptAllowanceHandle(after.spent, alice)).toBe(200n); // NOT reset
+    expect(after.lastUpdated).toBe(before.lastUpdated); // grid untouched
   });
 
   it("guards updates with (index, id) and validates the resulting window", async () => {

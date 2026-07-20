@@ -49,6 +49,7 @@ export interface SpendParams {
 }
 
 export interface PermitGrantMessage {
+  owner: Hex;
   token: Hex;
   spender: Hex;
   limitHandle: Hex;
@@ -56,15 +57,18 @@ export interface PermitGrantMessage {
   startTime: bigint;
   endTime: bigint;
   nonce: bigint;
+  epoch: bigint;
   sigDeadline: bigint;
 }
 
 export interface PermitSpendMessage {
+  owner: Hex;
   token: Hex;
   spender: Hex;
   capHandle: Hex;
   to: Hex;
   nonce: bigint;
+  epoch: bigint;
   sigDeadline: bigint;
 }
 
@@ -229,6 +233,7 @@ export function useAllowanceSuite () {
 
   const PERMIT_GRANT_TYPES = {
     PermitGrant: [
+      { name: "owner", type: "address" },
       { name: "token", type: "address" },
       { name: "spender", type: "address" },
       { name: "limitHandle", type: "bytes32" },
@@ -236,17 +241,20 @@ export function useAllowanceSuite () {
       { name: "startTime", type: "uint64" },
       { name: "endTime", type: "uint64" },
       { name: "nonce", type: "uint256" },
+      { name: "epoch", type: "uint256" },
       { name: "sigDeadline", type: "uint256" }
     ]
   } as const;
 
   const PERMIT_SPEND_TYPES = {
     PermitSpend: [
+      { name: "owner", type: "address" },
       { name: "token", type: "address" },
       { name: "spender", type: "address" },
       { name: "capHandle", type: "bytes32" },
       { name: "to", type: "address" },
       { name: "nonce", type: "uint256" },
+      { name: "epoch", type: "uint256" },
       { name: "sigDeadline", type: "uint256" }
     ]
   } as const;

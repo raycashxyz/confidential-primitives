@@ -29,7 +29,9 @@ interface IRecurringAllowance {
         /// @dev Encrypted amount spent in the current period.
         euint64 spent;
         /// @dev Last time `spent` was written (spend attempt or period reset).
-        ///      Invariant: `startTime <= lastUpdated <= block.timestamp`.
+        ///      Invariant: `startTime <= lastUpdated`. Once the permission has started it
+        ///      also holds `lastUpdated <= block.timestamp`; while still future-dated it
+        ///      equals `startTime` (which is itself in the future).
         uint64 lastUpdated;
         /// @dev Unix timestamp the permission (and its period grid) starts at.
         uint64 startTime;
@@ -170,6 +172,10 @@ interface IRecurringAllowance {
     /// @notice Every permission for (user, token, spender) was revoked.
     event Lockdown(address indexed user, address indexed token, address indexed spender);
 
+    /// @notice An owner bumped their permit epoch, invalidating all outstanding permit
+    ///         signatures at once (see {invalidateAllPermits}).
+    event PermitEpochIncremented(address indexed owner, uint256 newEpoch);
+
     /// @notice A spend was executed through the allowance. `transferred` is the encrypted
     ///         amount actually moved — an observer cannot tell a denied spend (0) from a
     ///         permitted one. `from`/`to` are already public in the token's own
@@ -233,6 +239,10 @@ interface IRecurringAllowance {
     ) external;
 
     function lockdown(TokenSpenderPair[] calldata pairs) external;
+
+    function invalidateAllPermits() external returns (uint256 newEpoch);
+
+    function permitEpoch(address owner) external view returns (uint256);
 
     function transferFrom(
         address from,
