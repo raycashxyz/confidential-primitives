@@ -6,6 +6,7 @@
 import {
   describe, it, expect
 } from "vitest";
+import { decodeEventLog, parseAbiItem } from "viem";
 
 import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
 import { encryptRecipient } from "../setup/fhe";
@@ -14,6 +15,7 @@ import { assertRevertsWith } from "../setup/asserts";
 import { getOrDeployMockUSDC } from "../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7984ERC20Wrapper";
 import { getOrDeployBatchedStealthWrapAdapter } from "../../src/deployers/BatchedStealthWrapAdapter";
+import { getOrDeployMockBatchedStealthWrapAdapterExtension } from "../../src/deployers/MockBatchedStealthWrapAdapterExtension";
 
 const boot = useBatchedSuite();
 
@@ -43,6 +45,97 @@ describe("BatchedStealthWrapAdapter", () => {
   });
 
   describe("initWrap", () => {
+    it("lets a subclass override initWrap and record through the batched deposit hook", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockBatchedStealthWrapAdapterExtension({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
+
+      await send(underlying.write.transfer([alice.account.address, AMOUNT], txOpts(deployer.account)));
+      await send(underlying.write.approve([wrapper.address, AMOUNT], txOpts(alice.account)));
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+
+      const deposit = await wrapper.read.deposits([0n]);
+      expect(deposit[0]).toBe(alice.account.address);
+      expect(deposit[1]).toBe(AMOUNT);
+      expect(await wrapper.read.batchFillCount([0n])).toBe(1n);
+      expect(await wrapper.read.getDepositsLength()).toBe(1n);
+      expect(await underlying.read.balanceOf([confidentialWrapper.address])).toBe(AMOUNT);
+    });
+
+    it("lets a subclass acquire from and record a depositor distinct from the caller", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send
+      } = await boot();
+      const { deployer, alice, bob } = wallets;
+      const { contract: wrapper } = await getOrDeployMockBatchedStealthWrapAdapterExtension({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
+
+      await send(underlying.write.transfer([bob.account.address, AMOUNT], txOpts(deployer.account)));
+      await send(underlying.write.approve([wrapper.address, AMOUNT], txOpts(bob.account)));
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      const receipt = await send(wrapper.write.initWrapFor([
+        bob.account.address,
+        AMOUNT,
+        handle,
+        inputProof,
+      ], fheTxOpts(alice.account)));
+
+      const deposit = await wrapper.read.deposits([0n]);
+      expect(deposit[0]).toBe(bob.account.address);
+      expect(deposit[1]).toBe(AMOUNT);
+      expect(await underlying.read.balanceOf([confidentialWrapper.address])).toBe(AMOUNT);
+
+      const wrapInitiated = receipt.logs
+        .map((log) => {
+          try {
+            return decodeEventLog({
+              abi: [parseAbiItem("event WrapInitiated(uint256 indexed batchId, uint256 indexed slot, address indexed depositor, uint256 amount, bytes32 eRecipient)")],
+              data: log.data,
+              topics: log.topics,
+            });
+          } catch {
+            return undefined;
+          }
+        })
+        .find((event) => event?.eventName === "WrapInitiated");
+      expect(wrapInitiated?.args.depositor).toBe(bob.account.address);
+    });
+
+    it("lets a subclass replace finalizeWrap", async () => {
+      const { publicClient, wallets, store, confidentialWrapper } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockBatchedStealthWrapAdapterExtension({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
+
+      await assertRevertsWith(
+        wrapper.write.finalizeWrap([[], alice.account.address], txOpts(alice.account)),
+        "FinalizeOverrideCalled",
+      );
+    });
+
     it("rounds non-multiple amounts down through the configured wrapper rate", async () => {
       const {
         publicClient, wallets, store, fhevm, send
