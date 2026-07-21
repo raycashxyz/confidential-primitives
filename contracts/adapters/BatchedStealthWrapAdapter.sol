@@ -158,7 +158,26 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         uint256 amount,
         externalEaddress eRecipient,
         bytes calldata inputProof
-    ) external override nonReentrant returns (uint256 slot) {
+    ) external virtual override nonReentrant returns (uint256 slot) {
+        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
+        (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
+        slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);
+    }
+
+    /**
+     * @dev Record an already-wrapped deposit in the current batch.
+     *
+     *      Kept separate from token acquisition so derived adapters can source deposits
+     *      differently while preserving this adapter's batch selection, close, and
+     *      accounting semantics. Callers that acquire tokens through external calls
+     *      must ensure their public entrypoint is `nonReentrant` before calling this.
+     */
+    function _recordBatchedDeposit(
+        address depositor,
+        uint256 wrappedUnderlying,
+        euint64 eAmount,
+        eaddress verifiedRecipient
+    ) internal returns (uint256 slot) {
         uint256 batchId = currentBatchId;
         Batch storage batch = _batches[batchId];
         if (batch.closed || batch.fillCount == maxBatchDeposits) {
@@ -168,13 +187,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         }
         uint256 batchIndex = batch.fillCount;
 
-        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
-        (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         FHE.allowThis(verifiedRecipient);
 
         slot = batchId * maxBatchDeposits + batchIndex;
         deposits[slot] = Deposit({
-            depositor: msg.sender,
+            depositor: depositor,
             amount: wrappedUnderlying,
             eAmount: eAmount,
             eRecipient: verifiedRecipient
@@ -186,7 +203,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
         if (batch.fillCount == maxBatchDeposits) _closeBatchUnchecked(batchId, batch);
 
-        emit WrapInitiated(batchId, slot, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
+        emit WrapInitiated(batchId, slot, depositor, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
     }
 
     // -----------------------------------------------------------------------
@@ -225,7 +242,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
      * @param recipient Address to match deposits against and transfer the total to.
      */
-    function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
+    function finalizeWrap(uint256[] calldata ids, address recipient) external virtual override nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
 
         // Count scanned slots across batches to size the payout array.
