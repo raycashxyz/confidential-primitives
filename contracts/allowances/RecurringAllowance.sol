@@ -12,6 +12,8 @@ import {UnorderedNonces} from "./base/UnorderedNonces.sol";
 
 /**
  * @title RecurringAllowance
+ * @author Michalis Ghiumiusliu (@MichalisG)
+ * @author Pavlos Polianidis (@ppoliani)
  * @author Valerio Leo (@valeriohq)
  * @notice Encrypted, period-based spending permissions for ERC-7984 confidential
  *         tokens: "let this spender pull up to X per day", with X encrypted.

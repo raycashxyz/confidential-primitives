@@ -8,6 +8,7 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 /**
  * @title BatchedStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
+ * @author Pavlos Polianidis (@ppoliani)
  * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
  *         nullifier and a tree-reduced payout sum.
  *

@@ -8,6 +8,7 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
 /**
  * @title ContinuousStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
+ * @author Pavlos Polianidis (@ppoliani)
  * @notice Continuous stealth wrap adapter for an existing ERC7984ERC20Wrapper.
  *
  *         Deposits accumulate in one shared pool and are finalized by

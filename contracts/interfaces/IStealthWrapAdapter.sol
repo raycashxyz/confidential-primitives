@@ -6,6 +6,7 @@ import {externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 /**
  * @title IStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
+ * @author Pavlos Polianidis (@ppoliani)
  * @notice Shared interface for stealth wrap adapters over existing ERC7984ERC20Wrapper tokens.
  */
 interface IStealthWrapAdapter {
