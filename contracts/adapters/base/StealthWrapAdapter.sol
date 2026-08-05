@@ -12,6 +12,7 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
 /**
  * @title StealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
+ * @author Pavlos Polianidis (@ppoliani)
  * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper.
  *
  *         This contract does not implement an ERC7984 token. It escrows confidential
