@@ -14,6 +14,26 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         Deposits accumulate in one shared pool and are finalized by
  *         caller-selected ids. This gives maximum flexibility, but the caller
  *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
+ *
+ *         `minDecoys` IS A COUNT OF IDS, NOT A MEASURE OF PRIVACY. Two consequences worth knowing
+ *         before choosing it, neither of which the contract can check:
+ *
+ *         - COLD START. Finalization needs at least `minDecoys` existing deposits, but {initWrap}
+ *           has no matching floor: it escrows funds happily into a pool too small to finalize from.
+ *           The first `minDecoys - 1` depositors in a quiet deployment simply wait. They are not
+ *           stuck — {initWrap} is permissionless, so a depositor can fund the missing deposits
+ *           themselves — but {WrapInitiated} publishes depositor and clear amount, so self-help
+ *           means creating a visible run of deposits attributable to them, which costs exactly the
+ *           privacy they came for. Seed the pool at deployment, or accept the wait.
+ *
+ *         - SPENT SLOTS STILL COUNT. A matched deposit's `amount` is rewritten to an encrypted
+ *           zero, but the slot stays in the push-only array and remains a legal id forever. It is
+ *           also publicly indistinguishable from a live one — `amount` is still a handle and
+ *           `originalAmount` never changes. So an early sybil can seed the pool, drain their own
+ *           deposits, and leave a victim whose only legal id sets are mostly attacker-owned; the
+ *           attacker then knows which ids are not the recipient's and links {WrapInitiated} to
+ *           {WrapFinalized}. Choosing ids well is the defence, and it is the caller's job —
+ *           `ids.length >= minDecoys` says nothing about how many of them are real.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on the configurable decoy floor. `minDecoys` is a MINIMUM: every finalize must
