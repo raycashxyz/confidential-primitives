@@ -318,6 +318,37 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(ordered).toEqual(["WrapInitiated", "BatchSealed"]);
     });
 
+    // Which batch a deposit joins is decided at execution, so anyone can fill the remaining slots
+    // ahead of a pending initWrap and push it into a fresh batch they then fill around it.
+    it("initWrapInto lands in the inspected batch or reverts without moving funds", async () => {
+      const {
+        wallets, underlying, deployWrapper, fundAndApprove, initWrap, fhevm, send
+      } = await boot();
+      const { alice, bob } = wallets;
+      const { contract: wrapper } = await deployWrapper(2n);
+      await fundAndApprove(wrapper, alice, 1n);
+      await fundAndApprove(wrapper, bob, 2n);
+
+      // Alice inspects batch 0, but bob fills it first and it rolls over.
+      await initWrap(wrapper, bob, bob.account.address);
+      await initWrap(wrapper, bob, bob.account.address);
+      expect(await wrapper.read.currentBatchId()).toBe(1n);
+
+      const balanceBefore = await underlying.read.balanceOf([alice.account.address]);
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrapInto([0n, AMOUNT, handle, inputProof], txOpts(alice.account)),
+        "NotCurrentBatch",
+      );
+      expect(await underlying.read.balanceOf([alice.account.address])).toBe(balanceBefore);
+
+      // Pinning the batch she can actually join works normally.
+      await send(wrapper.write.initWrapInto([1n, AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      expect(await wrapper.read.batchFillCount([1n])).toBe(1n);
+    });
+
     it("pulls underlying, records the deposit, and auto-closes a full batch", async () => {
       const {
         wallets, underlying, confidentialWrapper, deployWrapper, fundAndApprove, initWrap

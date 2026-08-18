@@ -17,6 +17,16 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
  *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
  *
+ *         THAT HOLDS AGAINST OBSERVERS, NOT AGAINST CO-DEPOSITORS. The batch hides a deposit only
+ *         among slots the adversary cannot rule out. Someone who deposited into the same batch
+ *         knows their own encrypted recipients, so they subtract those slots and what remains is
+ *         the real anonymity set; own enough of a batch and it collapses to one. With
+ *         `maxBatchDeposits` capped at 48 that is cheap to attempt, and {initWrapInto} only closes
+ *         the displacement half of it. This is inherent to any fixed-size set an adversary can pay
+ *         to fill — the mitigation is client-side, and it is practical here precisely because
+ *         deposits are sender-transparent: inspect who is already in a batch, pin it, and judge
+ *         whether the crowd is real.
+ *
  *         The recipient is already public at finalize time
  *            (it is an address argument, emitted in {WrapFinalized}), so a plain
  *            `finalized[batchId][recipient]` bool leaks nothing the call does not
@@ -192,6 +202,46 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external virtual override nonReentrant returns (uint256 slot) {
+        slot = _pullAndRecord(amount, eRecipient, inputProof);
+    }
+
+    /**
+     * @notice {initWrap}, but only if the deposit lands in `expectedBatchId`; otherwise revert
+     *         {NotCurrentBatch} without moving any funds.
+     *
+     * @dev Which batch a deposit joins is decided at execution, so a depositor who inspected a
+     *      batch before submitting has no guarantee of joining it. Anyone can fill the remaining
+     *      slots ahead of the transaction and push it into a fresh, empty batch — which is the
+     *      first half of a sandwich: displace the victim into a batch the attacker then fills with
+     *      deposits of its own, and at finalize the attacker excludes the slots it knows are not
+     *      the recipient's, leaving the victim's deposit identifiable. Pinning turns that into a
+     *      revert, so the depositor keeps their funds and can reassess.
+     *
+     *      THIS DOES NOT MAKE THE BATCH SAFE. It fixes displacement only; nothing stops an attacker
+     *      from co-depositing into the batch you pinned. An anonymity set is only as good as the
+     *      share of it you do not control, and with `maxBatchDeposits` at most 48 it is cheap to
+     *      own most of one. What helps is that this adapter is SENDER-TRANSPARENT: depositor and
+     *      amount are cleartext in {WrapInitiated}, so a batch dominated by freshly funded
+     *      addresses is visible BEFORE you join it. Pin the batch you actually inspected, and treat
+     *      "who else is in here" as a decision the client must make, not one the contract makes.
+     */
+    function initWrapInto(
+        uint256 expectedBatchId,
+        uint256 amount,
+        externalEaddress eRecipient,
+        bytes calldata inputProof
+    ) external nonReentrant returns (uint256 slot) {
+        if (currentBatchId != expectedBatchId) revert NotCurrentBatch();
+        slot = _pullAndRecord(amount, eRecipient, inputProof);
+    }
+
+    /// @dev Shared body of the two deposit entry points. Callers must be `nonReentrant`: the token
+    ///      pull and wrap are external calls made before the deposit is recorded.
+    function _pullAndRecord(
+        uint256 amount,
+        externalEaddress eRecipient,
+        bytes calldata inputProof
+    ) private returns (uint256 slot) {
         eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);

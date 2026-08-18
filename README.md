@@ -77,6 +77,13 @@ Batched is cheaper at every size and scales to a full 48-slot set; continuous co
 
 Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this set of deposits (or this batch)." It does **not** reveal which of those deposits were `R`'s: each deposit's encrypted recipient is compared to `R` homomorphically (`FHE.eq`, under encryption) and selected obliviously, so the chain never learns the per-deposit match. It doesn't even reveal whether *any* deposit matched: the payout is an encrypted sum that can be zero. So `R`'s address is public at finalize, but it stays unlinkable to any individual deposit.
 
+**Against a passive observer.** The set hides a deposit only among the slots an adversary cannot rule out, and a *co-depositor* can rule out their own. Someone who put deposits into the same batch knows those encrypted recipients aren't `R`, so they subtract them; whatever is left is the real anonymity set. Own enough of a batch and it collapses to a single slot. That is inherent to any fixed-size anonymity set an adversary can pay to fill — Tornado-style pools face the same thing — and it bites harder here because `maxBatchDeposits` is capped at 48, so filling one is cheap.
+
+There's no contract-side fix, but there is a practical client-side one, and it works *because* the deposit side is transparent: depositor and amount are cleartext in `WrapInitiated`, so **you can see who is already in a batch before you join it**. A batch dominated by freshly funded addresses that all appeared moments ago is visible for what it is. Two things follow for wallets:
+
+- Use `initWrapInto(expectedBatchId, …)` rather than `initWrap`, so you land in the batch you actually inspected or revert without moving funds. Plain `initWrap` can be front-run into a fresh, empty batch that the attacker then fills around you.
+- Judge the crowd before depositing — distinct depositors, funding history, age. `initWrapInto` prevents displacement; it does not stop anyone from co-depositing into the batch you pinned.
+
 | Signal | Visibility |
 | --- | --- |
 | Depositor | Public on `initWrap` |
