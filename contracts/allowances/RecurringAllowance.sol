@@ -146,7 +146,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bool firstPermission;
         (duration, startTime, endTime, firstPermission) =
             _validateNewPermission(msg.sender, token, spender, duration, startTime, endTime);
-        euint64 eLimit = FHE.fromExternal(limit, inputProof);
+        euint64 eLimit = _verifyLimit(limit, inputProof);
         permissionId = _finalizeCreate(msg.sender, token, spender, eLimit, duration, startTime, endTime, firstPermission);
     }
 
@@ -184,8 +184,28 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint64 endTime;
         (duration, startTime, endTime, firstPermission) =
             _validateNewPermission(owner, grant.token, grant.spender, grant.duration, grant.startTime, grant.endTime);
-        euint64 eLimit = FHE.fromExternal(externalEuint64.wrap(grant.limitHandle), inputProof);
+        euint64 eLimit = _verifyLimit(externalEuint64.wrap(grant.limitHandle), inputProof);
         permissionId = _finalizeCreate(owner, grant.token, grant.spender, eLimit, duration, startTime, endTime, firstPermission);
+    }
+
+    /**
+     * @dev Import a permission's encrypted limit. Both creation paths route through here so an
+     *      empty `inputProof` can never reach `FHE.fromExternal`.
+     *
+     *      With a proof, `fromExternal` calls the coprocessor's `verifyInput`, which checks the
+     *      handle really is a `Uint64`. With an EMPTY proof it returns the handle verbatim after
+     *      nothing but an ACL check, so any handle the caller is allowed on — of any type — becomes
+     *      `Permission.limit`. A non-`Uint64` limit makes every later `FHE.le` against it revert
+     *      inside `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one
+     *      poisoned payer then aborts an entire {tryTransferFrom} batch instead of being skipped.
+     *
+     *      Creation always supplies a limit, so nothing legitimate needs the empty-proof path. Only
+     *      {updatePermission} reads an empty proof as a sentinel ("leave the limit unchanged"),
+     *      which is why it keeps calling `FHE.fromExternal` behind its own `length > 0` gate.
+     */
+    function _verifyLimit(externalEuint64 limit, bytes calldata inputProof) private returns (euint64) {
+        if (inputProof.length == 0) revert MissingInputProof();
+        return FHE.fromExternal(limit, inputProof);
     }
 
     /// @dev Cleartext half of permission creation, shared by {setPermission} and

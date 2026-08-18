@@ -129,6 +129,29 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(300n);
   });
 
+  // Same gate as setPermission: the gasless path must not become a way to store an unverified,
+  // untyped handle as a permission limit.
+  it("rejects a grant submitted with an empty inputProof", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+
+    const { grant, signature } = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 500n
+    });
+
+    await assertRevertsWith(
+      allowance.write.permitSetPermission([
+        alice.account.address,
+        grant,
+        "0x",
+        signature
+      ], txOpts(bob.account)),
+      "MissingInputProof",
+    );
+  });
+
   it("rejects bad grant submissions: wrong signer, wrong submitter, expired, replayed", async () => {
     const { H, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;

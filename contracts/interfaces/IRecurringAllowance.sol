@@ -130,6 +130,10 @@ interface IRecurringAllowance {
     error SpenderMismatch();
     /// @dev The permit binds a recipient and `to` differs from it.
     error RecipientMismatch();
+    /// @dev A permission-creating call was given an empty `inputProof`. Creation always needs a
+    ///      real proof so the coprocessor type-checks the limit as `Uint64`; only
+    ///      {RecurringAllowance-updatePermission} reads an empty proof as "leave the limit alone".
+    error MissingInputProof();
 
     /// @notice A new permission was created.
     event PermissionSet(

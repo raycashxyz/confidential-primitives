@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, euint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -51,6 +51,37 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
 
     function confidentialWrapper() external view returns (address) {
         return address(CONFIDENTIAL_WRAPPER);
+    }
+
+    /**
+     * @dev Import a depositor-submitted encrypted recipient. Implementations MUST route every
+     *      `externalEaddress` through here rather than calling `FHE.fromExternal` directly.
+     *
+     *      An EMPTY `inputProof` is rejected. `FHE.fromExternal` has two branches: with a proof it
+     *      calls the coprocessor's `verifyInput`, which checks the handle really is a `Uint160`;
+     *      with an empty proof it returns the handle VERBATIM after nothing but an ACL check, so
+     *      any handle the caller happens to be allowed on lands in the `eaddress eRecipient` field
+     *      with its own type byte intact. That type confusion is the entry point for three separate
+     *      attacks, all of which this one check closes:
+     *
+     *        - a `Bool` handle. Scalar `FHE.eq(eaddress, address)` skips the operand type check, and
+     *          an encrypted `true` then compares equal to EVERY non-zero recipient — one poisoned
+     *          slot pays out once per attacker-chosen address, draining the pooled escrow.
+     *        - a `euint64` handle carrying the previous slot's own future payout. Handles are
+     *          content-addressed with no `msg.sender` in the preimage, so an attacker can weld each
+     *          slot's comparison onto the one before it. finalize then recomputes that chain
+     *          serially and trips the FHEVM 5M per-tx DEPTH budget (a counter distinct from the 20M
+     *          total), freezing a chosen recipient's escrow for good.
+     *        - any other wrong type. The continuous adapter's non-scalar `FHE.eq` type-checks both
+     *          operands and reverts `IncompatibleTypes` for every id set naming the slot, which
+     *          bricks those deposits permanently.
+     *
+     *      The documented handshake always carries a real proof (the recipient encrypts their
+     *      address bound to `(this, depositor)`), so nothing legitimate needs the empty-proof path.
+     */
+    function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
+        if (inputProof.length == 0) revert MissingInputProof();
+        return FHE.fromExternal(eRecipient, inputProof);
     }
 
     function underlying() public view returns (address) {

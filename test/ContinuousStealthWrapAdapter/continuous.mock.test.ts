@@ -93,6 +93,26 @@ describe("ContinuousStealthWrapAdapter", () => {
     return decryptEuint(H.fhevm.instance, handle, confidentialWrapper.address, owner);
   };
 
+  // Without a proof, FHE.fromExternal returns the handle verbatim and skips the Uint160 check, so
+  // a wrong-type handle would land in `recipient` and make every finalize naming that slot revert
+  // IncompatibleTypes inside the executor — bricking the deposit permanently.
+  it("rejects an empty inputProof on initWrap", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+    await fundAndApprove(wrapper, alice, 1n);
+
+    const { handle } = await encryptRecipient(
+      H.fhevm.instance,
+      wrapper.address,
+      alice.account.address,
+      alice.account.address,
+    );
+    await assertRevertsWith(
+      wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+      "MissingInputProof",
+    );
+  });
+
   it("wraps into confidential escrow and transfers the matched sum on finalize", async () => {
     const { alice } = H.wallets;
     const { contract: wrapper } = await deployWrapper();

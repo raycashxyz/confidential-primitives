@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, eaddress, externalEaddress, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {eaddress, externalEaddress, euint64} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {BatchedStealthWrapAdapter} from "../adapters/BatchedStealthWrapAdapter.sol";
 
@@ -20,7 +20,7 @@ contract MockBatchedStealthWrapAdapterExtension is BatchedStealthWrapAdapter {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external override nonReentrant returns (uint256 slot) {
-        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
+        eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);
     }
@@ -31,7 +31,7 @@ contract MockBatchedStealthWrapAdapterExtension is BatchedStealthWrapAdapter {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external nonReentrant returns (uint256 slot) {
-        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
+        eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(depositor, amount);
         slot = _recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, verifiedRecipient);
     }

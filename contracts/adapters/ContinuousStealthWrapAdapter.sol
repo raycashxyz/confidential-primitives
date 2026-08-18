@@ -51,7 +51,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         externalEaddress encryptedRecipient,
         bytes calldata inputProof
     ) external override nonReentrant returns (uint256 depositIndex) {
-        eaddress verifiedRecipient = FHE.fromExternal(encryptedRecipient, inputProof);
+        eaddress verifiedRecipient = _verifyRecipient(encryptedRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 encryptedAmount) = _wrapIntoEscrow(msg.sender, amount);
         FHE.allowThis(verifiedRecipient);
 
