@@ -59,10 +59,12 @@ import {UnorderedNonces} from "./base/UnorderedNonces.sol";
  *         gaslessly for the owner (the spender submits and pays); {permitTransferFrom}
  *         executes a one-shot transfer up to a signed encrypted cap, optionally bound to
  *         a recipient (a "confidential cheque"). Nonces are Permit2-style unordered
- *         bitmaps; signatures verify via ECDSA or ERC-1271. NOTE a submitted cheque burns
- *         its nonce regardless of the encrypted outcome (the outcome is unknowable in
- *         cleartext), and how long an input proof remains submittable after signing is an
- *         operational property of the FHEVM gateway — size `sigDeadline` accordingly.
+ *         bitmaps; signatures verify via ECDSA or ERC-1271. NOTE a cheque that submits
+ *         SUCCESSFULLY burns its nonce regardless of the encrypted outcome (the outcome is
+ *         unknowable in cleartext), but a token that reverts rolls the nonce back and leaves the
+ *         cheque live — see {permitTransferFrom}. How long an input proof remains submittable
+ *         after signing is an operational property of the FHEVM gateway — size `sigDeadline`
+ *         accordingly.
  *
  *         REENTRANCY: {transferFrom}, {tryTransferFrom} and {permitTransferFrom} call the
  *         caller-supplied `token` address, so all are `nonReentrant`. All other state is
@@ -473,6 +475,16 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      outcome: a cheque against an insufficient balance is burned unspent (the
      *      outcome cannot be read in cleartext). Like every spend path, requires this
      *      contract to be an ERC-7984 operator for `owner` on the token.
+     *
+     *      EXCEPTION — the nonce only burns if the call SUCCEEDS. It is written before the token
+     *      call, so a token that REVERTS instead of returning an encrypted zero takes the bitmap
+     *      write down with it and the cheque stays submittable until `sigDeadline`. The case that
+     *      matters in practice is an owner who has never received confidential tokens: some
+     *      implementations revert on the uninitialized balance handle rather than treating it as
+     *      zero. Such a cheque survives, and the named spender can resubmit it once the owner is
+     *      funded. Any retry is still bounded by the signed spender, recipient (when bound),
+     *      encrypted cap, epoch and deadline — but an owner who wants a failed cheque gone must
+     *      cancel it explicitly with {invalidateUnorderedNonces} or {invalidateAllPermits}.
      * @param owner The signer whose funds move
      * @param permit The signed cheque parameters
      * @param capProof Proof for `permit.capHandle` (bound to `(this, permit.spender)`)
