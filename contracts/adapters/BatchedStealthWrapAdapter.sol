@@ -245,6 +245,12 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      */
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual override nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
+        // Without this, `finalizeWrap([], anyone)` scans nothing, sums to E_ZERO and still makes a
+        // real `confidentialTransfer`, emitting a genuine ConfidentialTransfer plus
+        // WrapFinalized(anyone, handle, []) — a claim no indexer can tell from a real one, against a
+        // target who need never have touched the protocol, repeatable at gas cost and consuming no
+        // nullifier. The continuous adapter is already covered by its `minDecoys >= 1` floor.
+        if (ids.length == 0) revert InvalidId();
 
         // Count scanned slots across batches to size the payout array.
         uint256 totalSlots;

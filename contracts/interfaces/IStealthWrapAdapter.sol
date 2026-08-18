@@ -20,7 +20,9 @@ interface IStealthWrapAdapter {
     error InvalidMinDecoys();
     /// @dev Runtime finalize error: the selected decoy set is smaller than minDecoys.
     error TooFewDecoys();
+    /// @dev The finalize id set is empty, or names a unit that does not exist.
     error InvalidId();
+    /// @dev The finalize id set is not strictly ascending (unsorted or containing duplicates).
     error DuplicateId();
     /// @dev `initWrap` was called with an empty `inputProof`. Adapters require a real proof so the
     ///      coprocessor type-checks the handle as `Uint160` — see {StealthWrapAdapter-_verifyRecipient}.
