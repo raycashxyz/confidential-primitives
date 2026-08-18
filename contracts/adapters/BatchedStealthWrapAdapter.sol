@@ -271,7 +271,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /**
      * @notice Transfer the encrypted sum of every deposit in the given CLOSED batches whose
      *         encrypted recipient equals `recipient`. Permissionless; replay-safe via the
-     *         cleartext nullifier (a second call for the same (batch, recipient) reverts).
+     *         cleartext nullifier.
+     *
+     *         Batches already finalized for `recipient` are SKIPPED, not rejected — the call only
+     *         reverts {AlreadyFinalized} if none of `ids` is left to claim. {WrapFinalized} reports
+     *         the ids actually scanned, which is the anonymity set this call really used.
      *
      *         HCU note: the FHEVM per-tx budget bounds TOTAL SLOTS SCANNED PER CALL
      *         (~56 measured). With `maxBatchDeposits` near the 48 cap, finalize one
@@ -288,25 +292,18 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         // nullifier. The continuous adapter is already covered by its `minDecoys >= 1` floor.
         if (ids.length == 0) revert InvalidId();
 
-        // Count scanned slots across batches to size the payout array.
-        uint256 totalSlots;
-        uint256 prev;
-        for (uint256 k = 0; k < ids.length; k++) {
-            uint256 batchId = ids[k];
-            if (k > 0 && batchId <= prev) revert DuplicateId(); // strictly increasing, no dupes
-            prev = batchId;
-            Batch storage batch = _batches[batchId];
-            _ensureBatchClosedForFinalize(batchId, batch);
-            if (batch.finalized[recipient]) revert AlreadyFinalized();
-            batch.finalized[recipient] = true;
-            totalSlots += batch.fillCount;
-        }
+        (bool[] memory claimed, uint256 totalSlots, uint256 claimedCount) = _claimBatches(ids, recipient);
+        if (claimedCount == 0) revert AlreadyFinalized();
 
         // Per-slot payouts are independent (depth ~2 each); only the reduction deepens
         // the FHE dependency chain, and the tree keeps that at ceil(log2 N) adds.
         euint64[] memory payouts = new euint64[](totalSlots);
+        uint256[] memory scannedIds = new uint256[](claimedCount);
         uint256 p;
+        uint256 c;
         for (uint256 k = 0; k < ids.length; k++) {
+            if (!claimed[k]) continue;
+            scannedIds[c++] = ids[k];
             uint256 startIndex = ids[k] * maxBatchDeposits;
             uint256 count = _batches[ids[k]].fillCount;
             for (uint256 j = 0; j < count; j++) {
@@ -319,7 +316,41 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         euint64 total = _sumTree(payouts);
         euint64 transferred = _transferWrapped(recipient, total);
 
-        emit WrapFinalized(recipient, FHE.toBytes32(transferred), ids);
+        emit WrapFinalized(recipient, FHE.toBytes32(transferred), scannedIds);
+    }
+
+    /**
+     * @dev Cleartext pass of {finalizeWrap}: check ordering, close any batch that has become
+     *      eligible, and claim the `(batch, recipient)` nullifier of each id not already taken.
+     *
+     *      Already-finalized ids are SKIPPED rather than reverting the call. `ids` and `recipient`
+     *      are both visible in the mempool, so treating the set as all-or-nothing let anyone
+     *      front-run `finalizeWrap([7, 8, 9], R)` with `finalizeWrap([7], R)` and revert the
+     *      original on batch 7, leaving 8 and 9 unfinalized. The front-runner gains nothing — the
+     *      payout still goes to `R` — but repeated cheaply it degraded multi-batch finalization
+     *      into a retry loop. Skipping makes the original call succeed on whatever is left.
+     *
+     *      Returns a per-id flag rather than a filtered list because the caller needs both the
+     *      scan set and the id ordering, and the nullifier is set here.
+     */
+    function _claimBatches(
+        uint256[] calldata ids,
+        address recipient
+    ) private returns (bool[] memory claimed, uint256 totalSlots, uint256 claimedCount) {
+        claimed = new bool[](ids.length);
+        uint256 prev;
+        for (uint256 k = 0; k < ids.length; k++) {
+            uint256 batchId = ids[k];
+            if (k > 0 && batchId <= prev) revert DuplicateId(); // strictly increasing, no dupes
+            prev = batchId;
+            Batch storage batch = _batches[batchId];
+            _ensureBatchClosedForFinalize(batchId, batch);
+            if (batch.finalized[recipient]) continue;
+            batch.finalized[recipient] = true;
+            claimed[k] = true;
+            claimedCount++;
+            totalSlots += batch.fillCount;
+        }
     }
 
     function _ensureBatchClosedForFinalize(uint256 batchId, Batch storage batch) internal {

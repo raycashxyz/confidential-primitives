@@ -5,6 +5,7 @@
 import {
   describe, it, expect
 } from "vitest";
+import { parseEventLogs } from "viem";
 
 import { useBatchedSuite, AMOUNT } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
@@ -74,6 +75,43 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
       "AlreadyFinalized",
     );
     expect(await decryptBalance(alice)).toBe(afterFirst); // unchanged
+  });
+
+  // `ids` and `recipient` are both visible in the mempool, so an all-or-nothing set let anyone
+  // front-run finalizeWrap([0, 1], R) with finalizeWrap([0], R) and revert the original on batch 0,
+  // leaving batch 1 unclaimed and forcing a retry.
+  it("skips an already-finalized batch instead of reverting the whole call", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
+    } = await boot();
+    const { alice, bob } = wallets;
+    const { contract: wrapper } = await deployWrapper(2n);
+    await fundAndApprove(wrapper, alice, 4n);
+    for (let i = 0; i < 4; i++) await initWrap(wrapper, alice, alice.account.address); // batches 0, 1
+
+    // The front-run: a third party claims batch 0 for alice. She still receives the money.
+    await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(bob.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+
+    // Alice's original call now lands on what is left rather than reverting.
+    const receipt = await send(
+      wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)),
+    );
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
+
+    // The event reports the ids actually scanned — the real anonymity set for this call.
+    const [finalized] = parseEventLogs({
+      abi: wrapper.abi,
+      logs: receipt.logs,
+      eventName: "WrapFinalized"
+    });
+    expect(finalized.args.ids).toEqual([1n]);
+
+    // Nothing left to claim still reverts.
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], txOpts(alice.account)),
+      "AlreadyFinalized",
+    );
   });
 
   it("pays each recipient only their own deposits from a shared batch", async () => {
