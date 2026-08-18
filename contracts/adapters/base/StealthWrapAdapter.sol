@@ -22,6 +22,18 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         matching deposits and transfer the resulting confidential balance to the
  *         cleartext recipient.
  *
+ *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. `FHE.fromExternal` proves the
+ *         ciphertext is well-formed and correctly bound; it says nothing about the ADDRESS inside.
+ *         The depositor pays before knowing what they paid for, so the handshake requires trusting
+ *         whoever produced the handle. A recipient who supplies an encryption of someone else's
+ *         address redirects the payment; one who supplies an encryption of the zero address destroys
+ *         it outright, because {finalizeWrap} rejects `address(0)` in cleartext, so no permitted
+ *         recipient can ever match that deposit and the funds stay in escrow forever.
+ *
+ *         Client-side validation does not close this: the party doing the encrypting is exactly the
+ *         party being trusted, and the depositor cannot decrypt the handle to check. Treat a
+ *         payment request as an authenticated message from the payee and verify it out of band.
+ *
  *         EXACT EXITS FORFEIT UNLINKABILITY. Deposit amounts are public and rounded to the
  *         wrapper's `rate()`, and the finalize event names the scanned set. The payout itself stays
  *         encrypted here — but the recipient holds it, and unwrapping it publicly reveals its clear
