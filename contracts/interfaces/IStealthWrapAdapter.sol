@@ -7,7 +7,12 @@ import {externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
  * @title IStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Shared interface for stealth wrap adapters over existing ERC7984ERC20Wrapper tokens.
+ * @notice Shared interface for stealth wrap adapters over an existing OpenZeppelin
+ *         ERC7984ERC20Wrapper on the Zama FHEVM.
+ * @dev ERC-7984 compliance alone is NOT sufficient. Implementations require Zama `eaddress` /
+ *      `euint64` handles, the FHEVM ACL and coprocessor-issued input proofs, plus the wrapper
+ *      extensions `underlying()` and `rate()` — which are not part of ERC-7984 itself. The wrapper
+ *      must also be exact-or-revert; see {StealthWrapAdapter}.
  */
 interface IStealthWrapAdapter {
     /// @dev The requested clear amount wraps to zero after applying the underlying wrapper rate.

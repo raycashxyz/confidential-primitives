@@ -7,7 +7,12 @@ import {euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
  * @title IRecurringAllowance
  * @author Valerio Leo (@valeriohq)
  * @notice Interface for {RecurringAllowance}: encrypted, period-based spending
- *         permissions over any ERC-7984 confidential token.
+ *         permissions over an ERC-7984 confidential token on the Zama FHEVM.
+ * @dev ERC-7984 compliance alone is NOT sufficient. The standard treats confidential amounts as
+ *      opaque `bytes32` pointers and leaves their resolution implementation-specific (FHE,
+ *      zero-knowledge, enclaves, …); this contract requires Zama `euint64` handles, the FHEVM ACL
+ *      and coprocessor-issued input proofs, and it operates on handles the token returns, so the
+ *      token must live in the same FHEVM deployment.
  */
 interface IRecurringAllowance {
     /**
