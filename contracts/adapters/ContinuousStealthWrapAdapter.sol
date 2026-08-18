@@ -131,9 +131,9 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
             // cost 20,000 HCU per scanned slot. Since the HCU budget is what bounds `ids.length`,
             // and `ids.length` IS the anonymity set, that was a privacy cost as well as a gas one.
             //
-            // The scalar path skips the operand type check, which is only safe because
-            // {_verifyRecipient} rejects empty proofs — every stored handle is coprocessor-verified
-            // as Uint160. Do not relax that gate while this comparison is scalar.
+            // The scalar path skips the operand type check, which is only safe because every stored
+            // handle was imported through {_verifyRecipient}, i.e. coprocessor `verifyInput`-verified
+            // as Uint160. Do not import recipients any other way while this comparison is scalar.
             ebool isMatch = FHE.eq(d.recipient, recipient);
             payouts[k] = FHE.select(isMatch, d.amount, E_ZERO);
 

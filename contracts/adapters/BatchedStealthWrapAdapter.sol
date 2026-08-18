@@ -43,11 +43,12 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         {sealBatch} or automatically on the first {finalizeWrap} attempt, so funds
  *         cannot stay stuck without allowing premature one-deposit batches.
  *
- *         Recipient handshake (how the depositor never learns the recipient): the
+ *         Recipient handshake (how the recipient stays hidden FROM THE CHAIN): the
  *         RECIPIENT encrypts their own address off-chain with the input proof bound to
  *         the DEPOSITOR as userAddress, and hands (handle, proof) to the depositor,
  *         who submits it via {initWrap}. The recipient recognises their deposit by
- *         watching for their handle in {WrapInitiated}.
+ *         watching for their handle in {WrapInitiated}. See the DEPOSITOR TRUST note on
+ *         {StealthWrapAdapter} for what this does NOT hide.
  *
  *         Like the other adapters: deposits are wrapped immediately into confidential
  *         balance owned by this contract, then transferred to recipients on finalize.

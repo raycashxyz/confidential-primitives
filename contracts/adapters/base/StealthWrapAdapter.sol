@@ -2,6 +2,8 @@
 pragma solidity ^0.8.27;
 
 import {FHE, euint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
+import {Impl, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
+import {FheType} from "@fhevm/solidity/lib/FheType.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -21,6 +23,30 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         records an encrypted recipient. finalizeWrap variants homomorphically select
  *         matching deposits and transfer the resulting confidential balance to the
  *         cleartext recipient.
+ *
+ *         DEPOSITOR TRUST — THE RECIPIENT IS HIDDEN FROM THE CHAIN AND FROM THE DEPOSITOR.
+ *         The obvious way to import the recipient, `FHE.fromExternal`, would only hide it from the
+ *         chain. It expands to `Impl.verify`, which after the coprocessor proof check runs
+ *         `IACL.allowTransient(result, msg.sender)` — and inside {initWrap} that `msg.sender` is the
+ *         depositor. An EOA depositor gains nothing from that transient grant (it dies with the
+ *         transaction), but a CONTRACT depositor could, still inside the same transaction, promote
+ *         it with `FHE.allow` or publish it with `FHE.makePubliclyDecryptable` and read the recipient
+ *         address the handshake conceals.
+ *
+ *         So {_verifyRecipient} does NOT call `FHE.fromExternal`. It imports the ciphertext through
+ *         {_importRecipient}, which calls the coprocessor's `verifyInput` directly. That runs the
+ *         identical proof check with the identical binding — `contractAddress` is the executor's
+ *         caller (this adapter) and `userAddress` is the depositor — but the only ACL grant it makes
+ *         is the executor's own `allowTransient(result, msg.sender)`, and there `msg.sender` is the
+ *         adapter, not the depositor. The adapter then persists its access with `FHE.allowThis`; the
+ *         depositor is named only inside the proof and is granted no ACL access to escalate. The
+ *         proof is still bound to the depositor, so no third party can submit it — the property
+ *         {_consumeRecipientHandle} depends on — and the recipient is concealed from a contract
+ *         depositor as well as from observers.
+ *
+ *         This is NOT a claim that the depositor can trust the recipient — see the next note. It is
+ *         the narrower guarantee that submitting a well-formed deposit does not leak the recipient to
+ *         whoever submitted it, contract or not.
  *
  *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. `FHE.fromExternal` proves the
  *         ciphertext is well-formed and correctly bound; it says nothing about the ADDRESS inside.
@@ -87,14 +113,24 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
 
     /**
      * @dev Import a depositor-submitted encrypted recipient. Implementations MUST route every
-     *      `externalEaddress` through here rather than calling `FHE.fromExternal` directly.
+     *      `externalEaddress` through here rather than importing it themselves.
      *
-     *      An EMPTY `inputProof` is rejected. `FHE.fromExternal` has two branches: with a proof it
-     *      calls the coprocessor's `verifyInput`, which checks the handle really is a `Uint160`;
-     *      with an empty proof it returns the handle VERBATIM after nothing but an ACL check, so
-     *      any handle the caller happens to be allowed on lands in the `eaddress eRecipient` field
-     *      with its own type byte intact. That type confusion is the entry point for three separate
-     *      attacks, all of which this one check closes:
+     *      Two things happen, in order:
+     *
+     *        1. An EMPTY `inputProof` is rejected outright. Every legitimate deposit carries a real
+     *           proof (the recipient encrypts their address bound to `(this, depositor)`), so this
+     *           rejects nothing valid while giving a clean, tested `MissingInputProof` revert.
+     *        2. The ciphertext is imported through {_importRecipient}, which calls the coprocessor's
+     *           `verifyInput` directly instead of `FHE.fromExternal`. That is the fix for the
+     *           depositor-ACL leak (see the DEPOSITOR TRUST note) and it also FORCES the handle to be
+     *           a `Uint160`, reverting `InvalidType` otherwise.
+     *
+     *      That mandatory `Uint160` check is what keeps a hostile handle out of the pipeline.
+     *      `FHE.fromExternal` has an empty-proof branch that returns a handle VERBATIM after only an
+     *      ACL check, letting a caller smuggle a wrong-typed handle into the `eaddress` slot; three
+     *      attacks follow from that, and importing through `verifyInput` — which always verifies the
+     *      proof and rejects any non-`Uint160` handle at the coprocessor — closes all three, with the
+     *      empty-proof gate above as an explicit first line:
      *
      *        - a `Bool` handle. Scalar `FHE.eq(eaddress, address)` skips the operand type check, and
      *          an encrypted `true` then compares equal to EVERY non-zero recipient — one poisoned
@@ -108,22 +144,49 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *          operands and reverts `IncompatibleTypes` for every id set naming the slot, which
      *          bricks those deposits permanently.
      *
-     *      The documented handshake always carries a real proof (the recipient encrypts their
-     *      address bound to `(this, depositor)`), so nothing legitimate needs the empty-proof path.
-     *
-     *      Handle freshness is delegated to {_consumeRecipientHandle}, which is where the
-     *      single-use policy and the grounds for overriding it are documented. Note the split: the
-     *      empty-proof gate above is NOT part of that hook and is deliberately not overridable,
-     *      because it is the type check that closes the three attacks listed here. A derived adapter
-     *      can relax freshness without being handed a way to relax the gate.
+     *      Handle freshness is delegated to {_consumeRecipientHandle}, which is where the single-use
+     *      policy and the grounds for overriding it are documented. Note the split: neither the
+     *      empty-proof gate nor the direct-`verifyInput` import is part of that hook, and neither is
+     *      overridable — a derived adapter can relax freshness without being handed a way to relax the
+     *      type check or to reintroduce the depositor-ACL leak.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
         if (inputProof.length == 0) revert MissingInputProof();
 
-        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
+        eaddress verifiedRecipient = _importRecipient(eRecipient, inputProof);
         _consumeRecipientHandle(FHE.toBytes32(verifiedRecipient));
 
         return verifiedRecipient;
+    }
+
+    /**
+     * @dev Verify `eRecipient` against `inputProof` and return the `eaddress`, granting ACL access
+     *      to THIS adapter and to no one else. This is the whole of the recipient-privacy fix, so it
+     *      is `private`: it must not be bypassable or overridable.
+     *
+     *      `FHE.fromExternal` would be the natural spelling and is wrong here. It expands to
+     *      `Impl.verify`, which does two things: it calls the coprocessor's `verifyInput` (whose own
+     *      `allowTransient(result, msg.sender)` grants THIS adapter, since the adapter is the executor's
+     *      caller), and THEN, back in the adapter's frame, it runs a second
+     *      `IACL.allowTransient(result, msg.sender)` where `msg.sender` is the depositor. That second
+     *      grant is the leak: it is the only reason the depositor ends up with ACL access at all.
+     *
+     *      Calling `verifyInput` directly performs the identical coprocessor check with the identical
+     *      `(contractAddress = this, userAddress = depositor)` binding — so the depositor-bound proof
+     *      that stops third parties submitting the handle is unchanged — and stops after the executor's
+     *      grant to this adapter. The depositor is named only inside the proof and receives nothing.
+     *      The caller then persists the adapter's access with `FHE.allowThis`, exactly as before.
+     *
+     *      Reads the executor address from the same coprocessor config every `FHE.*` op resolves
+     *      through, so it tracks whatever {ZamaEthereumConfig} installed. If a future FHEVM release
+     *      changes which address `verifyInput` grants (it grants its `msg.sender` today), re-audit
+     *      this: the depositor-privacy guarantee rests on that line.
+     */
+    function _importRecipient(externalEaddress eRecipient, bytes calldata inputProof) private returns (eaddress) {
+        IFHEVMExecutor coprocessor = IFHEVMExecutor(Impl.getCoprocessorConfig().CoprocessorAddress);
+        return eaddress.wrap(
+            coprocessor.verifyInput(externalEaddress.unwrap(eRecipient), msg.sender, inputProof, FheType.Uint160)
+        );
     }
 
     /**
