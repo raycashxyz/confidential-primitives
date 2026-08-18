@@ -105,6 +105,10 @@ There's no contract-side fix, but there is a practical client-side one, and it w
 | Which deposits matched | Hidden (oblivious `FHE.select`) |
 | Amount delivered | Encrypted `euint64`; can be zero |
 
+**Don't exit the exact amount you were paid.** The payout stays encrypted on-chain, but the recipient can spend that ciphertext — and if they *unwrap it publicly*, the clear value becomes known. Deposit amounts are already public and rounded to the wrapper's `rate()`, so once the exit value is known anyone can search the scanned set for a subset that sums to it. When exactly one subset matches — likely for small sets and distinctive amounts — that subset *is* the recipient's deposits, and the unlinkability the mix bought is gone.
+
+Nothing on-chain can prevent this: it happens after delivery, with the recipient's own key. Avoid an exact exit — unwrap a different amount than you received, split withdrawals over time, or mix the balance with funds from elsewhere before exiting.
+
 ## RecurringAllowance
 
 The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits — without publishing the limits.

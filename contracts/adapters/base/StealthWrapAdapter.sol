@@ -22,6 +22,14 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         matching deposits and transfer the resulting confidential balance to the
  *         cleartext recipient.
  *
+ *         EXACT EXITS FORFEIT UNLINKABILITY. Deposit amounts are public and rounded to the
+ *         wrapper's `rate()`, and the finalize event names the scanned set. The payout itself stays
+ *         encrypted here — but the recipient holds it, and unwrapping it publicly reveals its clear
+ *         value. Anyone can then search the scanned amounts for a subset summing to it; when only
+ *         one subset matches, that subset is the recipient's deposits. This happens after delivery,
+ *         under the recipient's own key, so no on-chain control can prevent it — recipients must
+ *         avoid exiting the exact amount they were paid.
+ *
  *         REENTRANCY: both helpers make external calls, but on OPPOSITE sides of the state they
  *         guard, so implementations must reason about them separately. Either way the public
  *         {initWrap} and {finalizeWrap} MUST be `nonReentrant`, as the bundled adapters are.
