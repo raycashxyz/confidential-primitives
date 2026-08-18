@@ -56,7 +56,20 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     uint256 public immutable maxBatchDeposits;
 
-    /// @notice Seconds after a batch's last deposit before anyone may {sealBatch} it.
+    /// @notice Seconds after a batch's FIRST deposit before anyone may {sealBatch} it.
+    /// @dev Anchored to the first deposit, not the last. A sliding timer measured from the last
+    ///      deposit is resettable by anyone: while the batch still has free slots, a depositor can
+    ///      submit the minimum wrappable amount just before the delay expires and push the deadline
+    ///      out again, repeating for every remaining slot — stretching the worst-case wait to about
+    ///      `(maxBatchDeposits - fillCount) * sealDelay`. Worse, {finalizeWrap} takes the cleartext
+    ///      recipient in calldata, so an observer can watch for a pending finalization and target
+    ///      that recipient specifically, filling the remaining slots with deposits it controls and
+    ///      shrinking the effective anonymity set at the same time.
+    ///
+    ///      An absolute deadline gives every batch a fixed maximum lifetime that no one can extend.
+    ///      The tradeoff is that a slowly-filling batch becomes sealable at a fixed age rather than
+    ///      after a quiet period, so size `sealDelay` as "how long a batch is allowed to spend
+    ///      gathering its anonymity set", not as "how long it must be idle".
     uint256 public immutable sealDelay;
 
     /// @notice Batch currently accepting deposits.
@@ -73,6 +86,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     struct Batch {
         uint256 fillCount;
         bool closed;
+        /// @dev Anchor for the seal deadline. Set once, by the batch's first deposit.
+        uint64 firstDepositAt;
+        /// @dev Informational only (batch activity for indexers); the seal deadline does not
+        ///      depend on it — see {sealDelay}. Packs into the same slot as the two fields above.
         uint64 lastDepositAt;
         mapping(address recipient => bool) finalized;
     }
@@ -130,6 +147,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     function batchClosed(uint256 batchId) public view returns (bool) {
         return _batches[batchId].closed;
+    }
+
+    /// @notice When the batch's seal deadline is anchored (its first deposit). Zero if untouched.
+    function batchFirstDepositAt(uint256 batchId) public view returns (uint64) {
+        return _batches[batchId].firstDepositAt;
     }
 
     function batchLastDepositAt(uint256 batchId) public view returns (uint64) {
@@ -209,6 +231,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         });
 
         batch.fillCount = batchIndex + 1;
+        if (batchIndex == 0) batch.firstDepositAt = uint64(block.timestamp);
         batch.lastDepositAt = uint64(block.timestamp);
         totalDeposits += 1;
 
@@ -308,8 +331,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         _closeBatchUnchecked(batchId, batch);
     }
 
+    /// @dev Callers must have established `fillCount > 0`, so `firstDepositAt` is set.
     function _sealDelayElapsed(Batch storage batch) internal view returns (bool) {
-        return block.timestamp >= uint256(batch.lastDepositAt) + sealDelay;
+        return block.timestamp >= uint256(batch.firstDepositAt) + sealDelay;
     }
 
     // Raw state transition: callers must first prove the batch is full or delay-eligible.
