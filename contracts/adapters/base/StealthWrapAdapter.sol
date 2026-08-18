@@ -62,6 +62,9 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
     IERC7984ERC20Wrapper public immutable CONFIDENTIAL_WRAPPER;
     euint64 public immutable E_ZERO;
 
+    /// @dev Encrypted-recipient handles already spent on a deposit — see {_verifyRecipient}.
+    mapping(bytes32 handle => bool) private _usedRecipientHandles;
+
     constructor(IERC7984ERC20Wrapper confidentialWrapper_) {
         if (address(confidentialWrapper_) == address(0)) revert ZeroAddress();
 
@@ -107,10 +110,80 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *
      *      The documented handshake always carries a real proof (the recipient encrypts their
      *      address bound to `(this, depositor)`), so nothing legitimate needs the empty-proof path.
+     *
+     *      Handle freshness is delegated to {_consumeRecipientHandle}, which is where the
+     *      single-use policy and the grounds for overriding it are documented. Note the split: the
+     *      empty-proof gate above is NOT part of that hook and is deliberately not overridable,
+     *      because it is the type check that closes the three attacks listed here. A derived adapter
+     *      can relax freshness without being handed a way to relax the gate.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
         if (inputProof.length == 0) revert MissingInputProof();
-        return FHE.fromExternal(eRecipient, inputProof);
+
+        eaddress verifiedRecipient = FHE.fromExternal(eRecipient, inputProof);
+        _consumeRecipientHandle(FHE.toBytes32(verifiedRecipient));
+
+        return verifiedRecipient;
+    }
+
+    /**
+     * @dev Freshness policy for an imported recipient handle, applied to every deposit that routes
+     *      through {_verifyRecipient}.
+     *
+     *      DEFAULT: SINGLE-USE. The handle is emitted in the deposit event so the recipient can spot
+     *      their own payment, which makes it a public tag: submit the same one twice and observers
+     *      can cluster those deposits as "same unknown recipient" without breaking any encryption.
+     *      Once one member of the cluster is tied to a clear address — by a finalize, by timing, by
+     *      off-chain context — the rest follow. Batch boundaries and decoy choice do not remove a tag
+     *      that travels with the deposit itself. Enforcing freshness here rather than leaving it to
+     *      wallets costs one storage slot per deposit and cannot be forgotten. For the bundled
+     *      adapters it rejects nothing legitimate — every payment request is supposed to carry its
+     *      own encryption, and a fresh encryption of the SAME address yields a different handle, so a
+     *      recipient can still be paid any number of times — and it cannot be griefed, because the
+     *      input proof binds a handle to its depositor, so no one else can spend it.
+     *
+     *      WHEN TO OVERRIDE: when the deposit path ALREADY publishes the grouping this protects. The
+     *      motivating case is a CREATE2 deposit-address flow that derives the address from the handle
+     *      (`salt == handle`), because that derivation is the only thing binding the address to a
+     *      recipient the payer cannot inspect — decouple them and whoever drives the recovery path
+     *      picks the recipient after the money has arrived. Deposits there are already clustered by
+     *      the payer's clear ERC-20 transfer TO that public address, which lands before `initWrap`
+     *      runs, so single-use buys nothing while its failure mode is severe: the address cannot
+     *      rotate its handle, so a second (often accidental) transfer to a live deposit address
+     *      cannot be wrapped at all, leaving only a cleartext sweep — which doxxes the FIRST deposit.
+     *
+     *      The apparent middle ground does not exist. Re-wrapping under a fresh handle cannot be
+     *      authenticated: the deposit address cannot identify its own recipient, so its recovery
+     *      entrypoint must be permissionless, and a bystander can route a handle encrypting THEIR
+     *      address through it. Proving the replacement matches means either publicly decrypting
+     *      `FHE.eq(old, new)` — which reveals exactly the linkage single-use was protecting — or
+     *      `FHE.select`-ing to an unclaimable recipient on mismatch, which lets any bystander burn
+     *      the funds for the price of gas. Ranked by damage, reuse (linked, funds recoverable) beats
+     *      both. So permitting reuse there is the correct policy, not a concession.
+     *
+     *      Overrides should call {_recordRecipientHandle} so {recipientHandleUsed} stays truthful. No
+     *      extra event is needed: each adapter already emits the handle in its deposit event, so a
+     *      repeat is visible to any indexer. And state it in the adapter's own docs — deposits made
+     *      through it are publicly linkable by recipient, so it must not be presented as offering the
+     *      unlinkability the bundled adapters do.
+     */
+    function _consumeRecipientHandle(bytes32 handle) internal virtual {
+        if (_usedRecipientHandles[handle]) revert RecipientHandleAlreadyUsed();
+        _recordRecipientHandle(handle);
+    }
+
+    /// @dev Mark a handle as spent WITHOUT rejecting a repeat. Exists so an override of
+    ///      {_consumeRecipientHandle} that permits reuse can still keep {recipientHandleUsed}
+    ///      answering truthfully; the mapping itself stays private.
+    function _recordRecipientHandle(bytes32 handle) internal {
+        _usedRecipientHandles[handle] = true;
+    }
+
+    /// @notice Whether an encrypted-recipient handle has already funded a deposit here.
+    /// @dev Records history, not policy: an adapter that overrides {_consumeRecipientHandle} to
+    ///      permit reuse still reports `true` here for a handle it will happily accept again.
+    function recipientHandleUsed(bytes32 handle) external view returns (bool) {
+        return _usedRecipientHandles[handle];
     }
 
     function underlying() public view returns (address) {

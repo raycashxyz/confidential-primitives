@@ -17,6 +17,7 @@ import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7
 import { getOrDeployBatchedStealthWrapAdapter } from "../../src/deployers/BatchedStealthWrapAdapter";
 import { getOrDeployMockBatchedStealthWrapAdapterExtension } from "../../src/deployers/MockBatchedStealthWrapAdapterExtension";
 import { getOrDeployMockTransientAmountAdapter } from "../../src/deployers/MockTransientAmountAdapter";
+import { getOrDeployMockReusableHandleAdapter } from "../../src/deployers/MockReusableHandleAdapter";
 
 const boot = useBatchedSuite();
 
@@ -56,6 +57,94 @@ describe("BatchedStealthWrapAdapter", () => {
       const { alice } = wallets;
       const { contract: wrapper } = await deployWrapper(2n);
       await fundAndApprove(wrapper, alice, 1n);
+
+      const { handle } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        "MissingInputProof",
+      );
+    });
+
+    // The handle is public in WrapInitiated so the recipient can spot their payment, which makes
+    // reuse a stable tag linking otherwise separate deposits as "same unknown recipient".
+    it("rejects a replayed recipient handle but allows a fresh one for the same address", async () => {
+      const {
+        wallets, fhevm, deployWrapper, fundAndApprove, send
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(4n);
+      await fundAndApprove(wrapper, alice, 2n);
+
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
+
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, inputProof], txOpts(alice.account)),
+        "RecipientHandleAlreadyUsed",
+      );
+
+      // A new encryption of the SAME recipient is a different handle, so paying them again is fine.
+      const fresh = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      expect(fresh.handle).not.toBe(handle);
+      await send(wrapper.write.initWrap([AMOUNT, fresh.handle, fresh.inputProof], fheTxOpts(alice.account)));
+      expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
+    });
+
+    // Single-use is the default policy, not an invariant: a deposit-address flow keyed on the handle
+    // (salt == handle) cannot rotate it, and its deposits are already clustered by the payer's clear
+    // transfer to that public address. Reuse must stay claimable — both deposits pay out to R.
+    it("lets a subclass permit handle reuse without breaking the payout", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send, decryptBalance
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockReusableHandleAdapter({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address], // 2 slots -> closes on the second deposit
+        force: true,
+      });
+
+      await send(underlying.write.transfer([alice.account.address, AMOUNT * 2n], txOpts(deployer.account)));
+      await send(underlying.write.approve([wrapper.address, AMOUNT * 2n], txOpts(alice.account)));
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      // The handle is recorded as seen — the view reports history, not policy...
+      expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
+      // ...so the same handle is accepted again where the base adapter reverts.
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
+      expect(await wrapper.read.batchClosed([0n])).toBe(true);
+
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
+      expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+    });
+
+    // The empty-proof gate is deliberately outside the overridable freshness hook: it is the type
+    // check that closes the Bool/euint64 recipient attacks, so relaxing reuse must not relax it.
+    it("keeps the empty-proof gate on a subclass that permits handle reuse", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, fhevm
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockReusableHandleAdapter({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
 
       const { handle } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,

@@ -33,6 +33,14 @@ interface IStealthWrapAdapter {
     /// @dev `initWrap` was called with an empty `inputProof`. Adapters require a real proof so the
     ///      coprocessor type-checks the handle as `Uint160` — see {StealthWrapAdapter-_verifyRecipient}.
     error MissingInputProof();
+    /// @dev This encrypted-recipient handle has already funded a deposit. Handles are single-use:
+    ///      reusing one publicly links the deposits. Ask the recipient for a fresh encryption.
+    /// @dev Single-use is the DEFAULT policy, not an invariant of the interface. A derived adapter
+    ///      whose deposit path already publishes the grouping — a CREATE2 deposit address keyed on
+    ///      the handle, where the payer's clear transfer to that address links the deposits before
+    ///      the wrap even runs — may override it and never raise this. See
+    ///      {StealthWrapAdapter-_consumeRecipientHandle}.
+    error RecipientHandleAlreadyUsed();
 
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);
