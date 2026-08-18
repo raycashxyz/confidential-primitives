@@ -22,10 +22,19 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         matching deposits and transfer the resulting confidential balance to the
  *         cleartext recipient.
  *
- *         REENTRANCY: {_wrapIntoEscrow} and {_transferWrapped} make external calls
- *         (safeTransferFrom / wrap / confidentialTransfer) BEFORE the caller records its own
- *         state (deposit entries, nullifiers). Implementations MUST therefore guard their public
- *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled adapters do.
+ *         REENTRANCY: both helpers make external calls, but on OPPOSITE sides of the state they
+ *         guard, so implementations must reason about them separately. Either way the public
+ *         {initWrap} and {finalizeWrap} MUST be `nonReentrant`, as the bundled adapters are.
+ *
+ *         - {_wrapIntoEscrow} calls out (safeTransferFrom / wrap) BEFORE the caller records its
+ *           deposit entry, so a re-entrant call would see escrow that no deposit yet accounts for.
+ *         - {_transferWrapped} is the other way round: finalizers commit their claim state FIRST —
+ *           the batched adapter sets each cleartext `(batch, recipient)` nullifier, the continuous
+ *           one rewrites matched deposit amounts to zero — and only then make the external
+ *           `confidentialTransfer`. That ordering is deliberate (a re-entrant finalize finds the
+ *           claim already taken) and it is safe to commit optimistically because a revert in the
+ *           transfer unwinds those writes atomically. Derived finalizers must preserve it: moving
+ *           the claim write after the transfer would expose a double-claim behind the guard.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -109,7 +118,9 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allowThis(wrappedAmount);
     }
 
-    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`.
+    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`. Unlike
+    ///      {_wrapIntoEscrow}, callers are expected to have committed their claim state (nullifier
+    ///      or zeroed amount) BEFORE calling this — see the contract-level REENTRANCY note.
     function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
