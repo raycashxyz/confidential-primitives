@@ -9,8 +9,8 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  * @title BatchedStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
- *         nullifier and a tree-reduced payout sum.
+ * @notice Batch-based stealth wrap adapter with a per-(batch, recipient) encrypted claimed
+ *         accumulator and a tree-reduced payout sum.
  *
  *         Same privacy model as the other adapters: a deposit is SENDER-TRANSPARENT
  *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
@@ -27,21 +27,26 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         deposits are sender-transparent: inspect who is already in a batch, pin it, and judge
  *         whether the crowd is real.
  *
- *         The recipient is already public at finalize time
- *            (it is an address argument, emitted in {WrapFinalized}), so a plain
- *            `finalized[batchId][recipient]` bool leaks nothing the call does not
- *            already reveal.
+ *         REPLAY GUARD IS AN ENCRYPTED LEDGER, NOT A BOOL. Each batch tracks, per recipient, an
+ *         encrypted `claimed` total; {finalizeWrap} pays `matched - claimed` and credits back only
+ *         what the wrapper reports it actually moved. So `claimed` can never exceed a recipient's
+ *         matched sum (no double-spend), and a soft-failed or partial transfer leaves the remainder
+ *         claimable instead of destroying it — the adapter needs no exact-or-revert wrapper on the
+ *         finalize path (the continuous adapter, which consumes deposits by zeroing them, still
+ *         does; see its docs). The cost of dropping the old cleartext nullifier: a redundant
+ *         finalize of a fully-claimed batch no longer reverts, it just pays an encrypted zero — log
+ *         noise, throttled by paying for the scan, and the amount was always opaque anyway.
  *
  *         The payout sum is tree-reduced via {_sumTree}. Pairwise reduction keeps the
  *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
  *         FHEVM total-HCU budget rather than a long serial add chain.
  *
- *         Tradeoff: the nullifier is all-or-nothing per (batch, recipient), so a batch
- *         must be CLOSED (full, or timeout-sealed via {sealBatch}) before finalizing —
- *         this freezes each recipient's matched set (no later top-ups into a finalized
- *         batch). Tail batches can close only after `sealDelay`: either explicitly via
- *         {sealBatch} or automatically on the first {finalizeWrap} attempt, so funds
- *         cannot stay stuck without allowing premature one-deposit batches.
+ *         A batch must be CLOSED (full, or timeout-sealed via {sealBatch}) before finalizing, which
+ *         freezes each recipient's matched set (no later top-ups into a finalized batch) — this is
+ *         what makes `matched` stable enough to recompute on every retry. Tail batches can close only
+ *         after `sealDelay`: either explicitly via {sealBatch} or automatically on the first
+ *         {finalizeWrap} attempt, so funds cannot stay stuck without allowing premature one-deposit
+ *         batches.
  *
  *         Recipient handshake (how the recipient stays hidden FROM THE CHAIN): the
  *         RECIPIENT encrypts their own address off-chain with the input proof bound to
@@ -121,7 +126,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         /// @dev Informational only (batch activity for indexers); the seal deadline does not
         ///      depend on it — see {sealDelay}. Packs into the same slot as the two fields above.
         uint64 lastDepositAt;
-        mapping(address recipient => bool) finalized;
+        /// @dev Encrypted running total ALREADY delivered to each recipient from this batch. This is
+        ///      the replay guard AND the retry ledger: {finalizeWrap} pays `matched - claimed` and
+        ///      credits back what the wrapper reports actually moved, so a soft-failed or partial
+        ///      transfer leaves the shortfall claimable rather than destroying it. See {finalizeWrap}.
+        mapping(address recipient => euint64) claimed;
     }
 
     struct Deposit {
@@ -148,7 +157,6 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     error NothingToSeal();
     error SealDelayNotElapsed();
     error SealDelayTooShort();
-    error AlreadyFinalized();
 
     constructor(
         uint256 _maxBatchDeposits,
@@ -197,8 +205,14 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return _batches[batchId].lastDepositAt;
     }
 
-    function finalized(uint256 batchId, address recipient) public view returns (bool) {
-        return _batches[batchId].finalized[recipient];
+    /// @notice Encrypted amount already delivered to `recipient` from `batchId`. A handle equal to
+    ///         that recipient's matched sum for the batch means fully claimed; a smaller one means a
+    ///         soft-failed or partial finalize left a remainder still claimable. Uninitialized (zero
+    ///         handle) means no finalize has touched this (batch, recipient) yet.
+    /// @dev Replaces the old cleartext `finalized` bool: "fully claimed" is now an encrypted fact, so
+    ///      it cannot be reported as a plain bool without decryption.
+    function claimedAmount(uint256 batchId, address recipient) public view returns (euint64) {
+        return _batches[batchId].claimed[recipient];
     }
 
     // -----------------------------------------------------------------------
@@ -348,88 +362,100 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Transfer the encrypted sum of every deposit in the given CLOSED batches whose
-     *         encrypted recipient equals `recipient`. Permissionless; replay-safe via the
-     *         cleartext nullifier.
+     * @notice Transfer, per given CLOSED batch, the still-unclaimed part of the encrypted sum of
+     *         that batch's deposits whose encrypted recipient equals `recipient`. Permissionless and
+     *         RETRY-SAFE: a soft-failed or partial wrapper transfer leaves the remainder claimable.
      *
-     *         Batches already finalized for `recipient` are SKIPPED, not rejected — the call only
-     *         reverts {AlreadyFinalized} if none of `ids` is left to claim. {WrapFinalized} reports
-     *         the ids actually scanned, which is the anonymity set this call really used.
+     *         Each batch is finalized INDEPENDENTLY — one `confidentialTransfer` per id (see
+     *         {_finalizeBatch}). Passing several ids is a convenience, not a gas optimization: it
+     *         does not merge the transfers, so on a hooked wrapper each id pays its own per-transfer
+     *         hook cost. Near the HCU cap, finalize one batch per call; multi-batch calls suit
+     *         smaller batches.
      *
-     *         HCU note: the FHEVM per-tx budget bounds TOTAL SLOTS SCANNED PER CALL
-     *         (~56 measured). With `maxBatchDeposits` near the 48 cap, finalize one
-     *         batch per call; multi-batch calls suit smaller batch sizes.
+     *         REPLAY / DOUBLE-SPEND. There is no cleartext nullifier. Each batch tracks an encrypted
+     *         `claimed[recipient]` (see {Batch}); a finalize pays `matched - claimed` and credits back
+     *         only what the wrapper reports it actually moved, so `claimed` can never exceed a
+     *         recipient's matched sum and a fully-claimed batch pays an encrypted zero on any repeat.
+     *         The cost of dropping the cleartext guard: a repeat call still runs the scan and emits a
+     *         genuine-looking {WrapFinalized} carrying an encrypted-zero amount. That amount is opaque
+     *         in every path (a finalize of a batch the recipient is not in already emits one), and the
+     *         repeat is throttled by paying for the scan, so this is log noise, not a forgeable
+     *         payout. An empty id set is still rejected outright.
+     *
      * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
-     * @param recipient Address to match deposits against and transfer the total to.
+     * @param recipient Address to match deposits against and transfer to.
      */
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual override nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
-        // Without this, `finalizeWrap([], anyone)` scans nothing, sums to E_ZERO and still makes a
-        // real `confidentialTransfer`, emitting a genuine ConfidentialTransfer plus
-        // WrapFinalized(anyone, handle, []) — a claim no indexer can tell from a real one, against a
-        // target who need never have touched the protocol, repeatable at gas cost and consuming no
-        // nullifier. The continuous adapter is already covered by its `minDecoys >= 1` floor.
+        // `finalizeWrap([], anyone)` would otherwise scan nothing and still make a real
+        // `confidentialTransfer`, emitting WrapFinalized(anyone, handle, []) against a target who
+        // need never have touched the protocol. The continuous adapter is covered by `minDecoys >= 1`.
         if (ids.length == 0) revert InvalidId();
 
-        (bool[] memory claimed, uint256 totalSlots, uint256 claimedCount) = _claimBatches(ids, recipient);
-        if (claimedCount == 0) revert AlreadyFinalized();
-
-        // Per-slot payouts are independent (depth ~2 each); only the reduction deepens
-        // the FHE dependency chain, and the tree keeps that at ceil(log2 N) adds.
-        euint64[] memory payouts = new euint64[](totalSlots);
-        uint256[] memory scannedIds = new uint256[](claimedCount);
-        uint256 p;
-        uint256 c;
-        for (uint256 k = 0; k < ids.length; k++) {
-            if (!claimed[k]) continue;
-            scannedIds[c++] = ids[k];
-            uint256 startIndex = ids[k] * maxBatchDeposits;
-            uint256 count = _batches[ids[k]].fillCount;
-            for (uint256 j = 0; j < count; j++) {
-                Deposit storage d = deposits[startIndex + j];
-                ebool isMatch = FHE.eq(d.eRecipient, recipient);
-                payouts[p++] = FHE.select(isMatch, d.eAmount, E_ZERO);
-            }
-        }
-
-        euint64 total = _sumTree(payouts);
-        euint64 transferred = _transferWrapped(recipient, total);
-
-        emit WrapFinalized(recipient, FHE.toBytes32(transferred), scannedIds);
-    }
-
-    /**
-     * @dev Cleartext pass of {finalizeWrap}: check ordering, close any batch that has become
-     *      eligible, and claim the `(batch, recipient)` nullifier of each id not already taken.
-     *
-     *      Already-finalized ids are SKIPPED rather than reverting the call. `ids` and `recipient`
-     *      are both visible in the mempool, so treating the set as all-or-nothing let anyone
-     *      front-run `finalizeWrap([7, 8, 9], R)` with `finalizeWrap([7], R)` and revert the
-     *      original on batch 7, leaving 8 and 9 unfinalized. The front-runner gains nothing — the
-     *      payout still goes to `R` — but repeated cheaply it degraded multi-batch finalization
-     *      into a retry loop. Skipping makes the original call succeed on whatever is left.
-     *
-     *      Returns a per-id flag rather than a filtered list because the caller needs both the
-     *      scan set and the id ordering, and the nullifier is set here.
-     */
-    function _claimBatches(
-        uint256[] calldata ids,
-        address recipient
-    ) private returns (bool[] memory claimed, uint256 totalSlots, uint256 claimedCount) {
-        claimed = new bool[](ids.length);
         uint256 prev;
         for (uint256 k = 0; k < ids.length; k++) {
             uint256 batchId = ids[k];
             if (k > 0 && batchId <= prev) revert DuplicateId(); // strictly increasing, no dupes
             prev = batchId;
+
             Batch storage batch = _batches[batchId];
             _ensureBatchClosedForFinalize(batchId, batch);
-            if (batch.finalized[recipient]) continue;
-            batch.finalized[recipient] = true;
-            claimed[k] = true;
-            claimedCount++;
-            totalSlots += batch.fillCount;
+            _finalizeBatch(batchId, batch, recipient);
         }
+    }
+
+    /**
+     * @dev Finalize ONE batch for `recipient`, retry- and partial-safe.
+     *
+     *      Pays `owed = matched - alreadyClaimed`, then credits `alreadyClaimed + transferred` with
+     *      the amount the wrapper reports it ACTUALLY moved — never the amount requested. Two
+     *      invariants make this safe:
+     *
+     *        - `transferred <= owed` always (a transfer never moves more than asked), so
+     *          `claimed <= matched` holds by induction and `matched - claimed` never underflows.
+     *          A recipient can therefore never be paid more than their matched sum: no double-spend.
+     *        - crediting the ACTUAL amount means a wrapper that moved zero (freeze / pause / hook
+     *          veto) credits nothing and the whole claim survives for a later retry, and one that
+     *          moved only part credits that part and leaves the exact remainder claimable. This is
+     *          why the batched adapter needs no exact-or-revert wrapper on the finalize path.
+     *
+     *      `matched` is recomputed from the batch's slots on every call, which is sound because
+     *      deposits are immutable and the batch is closed before finalize — the reason this adapter
+     *      does NOT zero matched amounts (unlike the continuous one). Do not add such zeroing without
+     *      removing this ledger: it would make `matched` un-recomputable and break every retry.
+     *
+     *      REENTRANCY: the credit commits AFTER the external transfer (it needs the returned amount),
+     *      so unlike the deposit path this leans entirely on {finalizeWrap} being `nonReentrant` — a
+     *      reentrant finalize would otherwise read the stale `claimed` and double-pay. See the
+     *      contract-level REENTRANCY note on {StealthWrapAdapter}.
+     */
+    function _finalizeBatch(uint256 batchId, Batch storage batch, address recipient) private {
+        uint256 startIndex = batchId * maxBatchDeposits;
+        uint256 count = batch.fillCount;
+
+        // Per-slot payouts are independent (depth ~2 each); the tree keeps the reduction at
+        // ceil(log2 N) adds.
+        euint64[] memory payouts = new euint64[](count);
+        for (uint256 j = 0; j < count; j++) {
+            Deposit storage d = deposits[startIndex + j];
+            ebool isMatch = FHE.eq(d.eRecipient, recipient);
+            payouts[j] = FHE.select(isMatch, d.eAmount, E_ZERO);
+        }
+        euint64 matched = _sumTree(payouts);
+
+        euint64 alreadyClaimed = batch.claimed[recipient];
+        if (!FHE.isInitialized(alreadyClaimed)) alreadyClaimed = E_ZERO;
+        euint64 owed = FHE.sub(matched, alreadyClaimed);
+
+        euint64 transferred = _transferWrapped(recipient, owed);
+
+        euint64 newClaimed = FHE.add(alreadyClaimed, transferred);
+        FHE.allowThis(newClaimed);
+        batch.claimed[recipient] = newClaimed;
+
+        uint256[] memory scannedIds = new uint256[](1);
+        scannedIds[0] = batchId;
+        emit WrapFinalized(recipient, FHE.toBytes32(transferred), scannedIds);
     }
 
     function _ensureBatchClosedForFinalize(uint256 batchId, Batch storage batch) internal {

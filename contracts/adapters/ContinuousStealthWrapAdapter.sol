@@ -112,6 +112,23 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         emit WrapInitiated(depositIndex, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
     }
 
+    /**
+     * @notice Match the caller-chosen `ids` against `recipient` and transfer the encrypted sum,
+     *         zeroing each matched deposit so it cannot pay again.
+     *
+     * @dev REQUIRES AN EXACT-OR-REVERT (at least all-or-nothing) WRAPPER. Matched deposits are zeroed
+     *      BEFORE the transfer, so the zeroing is the nullifier. If the wrapper then soft-fails —
+     *      returns an encrypted zero or partial on a freeze / pause / blacklist / hook veto instead of
+     *      reverting — the claim is already consumed and the funds strand, with no way to retry.
+     *
+     *      Unlike {BatchedStealthWrapAdapter}, this CANNOT be made retry-safe. That adapter recomputes
+     *      a per-(batch, recipient) `matched` and credits an encrypted `claimed` ledger with what
+     *      actually moved; both rely on a fixed batch of immutable deposits. Here the "batch" is a
+     *      caller-chosen id set over a flat pool, so there is no stable unit to accumulate against, and
+     *      a partial transfer cannot be attributed back to individual deposits without one transfer per
+     *      slot (prohibitive). So the exact-or-revert wrapper requirement stands for this adapter; see
+     *      the SUPPORTED WRAPPERS note on {StealthWrapAdapter}.
+     */
     function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
         if (ids.length < minDecoys) revert TooFewDecoys();
         if (recipient == address(0)) revert ZeroAddress();

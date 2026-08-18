@@ -55,6 +55,8 @@ These two are a starting point, not the whole space. `StealthWrapAdapter` is bui
 
 The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20 once the recipient holds confidential balance.
 
+**The wrapper you point at must be exact-or-revert.** ERC-7984 permits an operation to *soft-fail* — return an encrypted zero while the transaction succeeds — and the adapters cannot cope with that, because the outcome is a ciphertext while every decision they make (record the deposit, spend the nullifier) is cleartext. On the deposit side, OpenZeppelin's wrapper moves the underlying before `_mint`, so a rejecting mint hook substitutes an encrypted zero and the adapter records a worthless deposit against underlying the wrapper has already kept. On the finalize side, the claim is spent before the transfer, so a soft-failed payout destroys the claim and delivers nothing. A bare `ERC7984ERC20Wrapper` is fine; an `ERC7984Hooked` one is only as safe as the modules its admin can install — including ones installed *after* deposits are already escrowed.
+
 ### Choosing an adapter
 
 Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implementations of the abstract `StealthWrapAdapter` and share its escrow-and-deliver machinery. They differ only in how the anonymity set is formed, and that one difference cascades into privacy, liveness, and gas.

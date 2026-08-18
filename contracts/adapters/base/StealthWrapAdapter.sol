@@ -68,19 +68,46 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         under the recipient's own key, so no on-chain control can prevent it — recipients must
  *         avoid exiting the exact amount they were paid.
  *
+ *         SUPPORTED WRAPPERS — SOFT-FAIL EXPOSURE DIFFERS BY PATH. ERC-7984 does not require `wrap`
+ *         and `confidentialTransfer` to move exactly what was asked: an operation may SOFT-FAIL,
+ *         returning an encrypted zero (or less than requested) while the transaction succeeds
+ *         (OpenZeppelin's own transfer is exact-or-zero via `FHESafeMath`, not exact-or-revert). How
+ *         much that matters depends on the path:
+ *
+ *         - deposit (BOTH adapters — still needs exact-or-revert). {_wrapIntoEscrow} pulls the
+ *           depositor's underlying, then wraps. OpenZeppelin's wrapper moves the underlying BEFORE
+ *           `_mint`, so on an `ERC7984Hooked` wrapper a rejecting mint hook can substitute an
+ *           encrypted zero instead of reverting. The adapter records a zero-valued deposit while the
+ *           wrapper has kept the underlying, and there is no refund path — the shortfall is a
+ *           cleartext underlying amount that cannot be un-pulled on an encrypted result.
+ *         - finalize (differs). The batched adapter is RETRY-SAFE: it pays `matched - claimed` and
+ *           credits back only what actually moved, so a soft-failed or partial transfer leaves the
+ *           remainder claimable (see {BatchedStealthWrapAdapter-finalizeWrap}). The continuous
+ *           adapter is NOT: it consumes deposits by zeroing them before the transfer, and a flat pool
+ *           cannot attribute a partial back to individual deposits, so a soft-fail there destroys the
+ *           claim. It keeps the exact-or-revert (at least all-or-nothing) finalize requirement; see
+ *           its docs.
+ *
+ *         So the deployment constraint is: any wrapper this points at must be exact-or-revert on
+ *         `wrap`, and additionally on `confidentialTransfer` unless the adapter's finalize path is
+ *         retry-safe. A bare OZ `ERC7984ERC20Wrapper` over a sufficient escrow balance qualifies (it
+ *         only soft-fails to zero on an insufficient balance, which finalize never hits); a hooked
+ *         one is only as safe as the modules its admin can install.
+ *
  *         REENTRANCY: both helpers make external calls, but on OPPOSITE sides of the state they
  *         guard, so implementations must reason about them separately. Either way the public
  *         {initWrap} and {finalizeWrap} MUST be `nonReentrant`, as the bundled adapters are.
  *
  *         - {_wrapIntoEscrow} calls out (safeTransferFrom / wrap) BEFORE the caller records its
  *           deposit entry, so a re-entrant call would see escrow that no deposit yet accounts for.
- *         - {_transferWrapped} is the other way round: finalizers commit their claim state FIRST —
- *           the batched adapter sets each cleartext `(batch, recipient)` nullifier, the continuous
- *           one rewrites matched deposit amounts to zero — and only then make the external
- *           `confidentialTransfer`. That ordering is deliberate (a re-entrant finalize finds the
- *           claim already taken) and it is safe to commit optimistically because a revert in the
- *           transfer unwinds those writes atomically. Derived finalizers must preserve it: moving
- *           the claim write after the transfer would expose a double-claim behind the guard.
+ *         - {_transferWrapped} is the other way round: the external `confidentialTransfer` sits next
+ *           to the claim commit, and the ordering differs by adapter. The continuous adapter zeroes
+ *           matched amounts BEFORE the transfer (optimistic: a revert unwinds it atomically). The
+ *           batched adapter credits its encrypted `claimed` ledger AFTER the transfer, because the
+ *           credit is the returned amount — so it relies purely on `nonReentrant` to stop a
+ *           re-entrant finalize from reading the stale ledger and double-paying. Either ordering is
+ *           safe ONLY under the guard. A derived finalizer that drops `nonReentrant` exposes a
+ *           double-claim on either ordering.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;

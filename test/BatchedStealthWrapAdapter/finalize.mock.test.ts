@@ -1,11 +1,11 @@
 /**
- * BatchedStealthWrapAdapter — finalizeWrap correctness (gating, replay nullifier, per-recipient
- * scan). Multi-batch + scale cases live in the sibling *.finalize-scale file.
+ * BatchedStealthWrapAdapter — finalizeWrap correctness (gating, no-double-spend via the encrypted
+ * claimed accumulator, per-recipient scan). Retry-safety against a soft-failing wrapper lives in the
+ * sibling *.retry-safety file; multi-batch + scale cases in *.finalize-scale.
  */
 import {
   describe, it, expect
 } from "vitest";
-import { parseEventLogs } from "viem";
 
 import { useBatchedSuite, AMOUNT } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
@@ -57,7 +57,7 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     expect(await decryptBalance(alice)).toBe(AMOUNT * 3n); // after
   });
 
-  it("is replay-safe: a second finalize for the same (batch, recipient) reverts", async () => {
+  it("does not double-pay a fully claimed batch on replay", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
     } = await boot();
@@ -70,17 +70,16 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     const afterFirst = await decryptBalance(alice);
     expect(afterFirst).toBe(AMOUNT * 2n);
 
-    await assertRevertsWith(
-      wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
-      "AlreadyFinalized",
-    );
+    // No cleartext nullifier: a replay does not revert, but `owed` is now zero so it delivers
+    // nothing. The accumulator, not a boolean, is what stops the double-pay.
+    await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
     expect(await decryptBalance(alice)).toBe(afterFirst); // unchanged
   });
 
-  // `ids` and `recipient` are both visible in the mempool, so an all-or-nothing set let anyone
-  // front-run finalizeWrap([0, 1], R) with finalizeWrap([0], R) and revert the original on batch 0,
-  // leaving batch 1 unclaimed and forcing a retry.
-  it("skips an already-finalized batch instead of reverting the whole call", async () => {
+  // `ids` and `recipient` are both visible in the mempool. The old all-or-nothing nullifier let a
+  // front-run of one batch revert the whole multi-batch call; the accumulator makes an
+  // already-claimed batch contribute an encrypted zero instead, so the original call still lands.
+  it("a front-run of one batch does not break the multi-batch finalize", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
     } = await boot();
@@ -93,25 +92,13 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(bob.account)));
     expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
 
-    // Alice's original call now lands on what is left rather than reverting.
-    const receipt = await send(
-      wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)),
-    );
+    // Alice's original [0, 1] call succeeds, paying only what batch 1 still owes.
+    await send(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
     expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
 
-    // The event reports the ids actually scanned — the real anonymity set for this call.
-    const [finalized] = parseEventLogs({
-      abi: wrapper.abi,
-      logs: receipt.logs,
-      eventName: "WrapFinalized"
-    });
-    expect(finalized.args.ids).toEqual([1n]);
-
-    // Nothing left to claim still reverts.
-    await assertRevertsWith(
-      wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], txOpts(alice.account)),
-      "AlreadyFinalized",
-    );
+    // A fully-claimed replay is a no-op, not a revert.
+    await send(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
   });
 
   it("pays each recipient only their own deposits from a shared batch", async () => {
