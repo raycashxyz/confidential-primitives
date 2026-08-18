@@ -288,6 +288,19 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      measured against the new grid (and a future `startTime` would make the reset
      *      math underflow). Re-submitting the SAME value is a no-op and does NOT reset,
      *      so a wallet echoing back a full record can't silently refresh the budget.
+     *
+     *      TREAT A GRID CHANGE AS ISSUING A FRESH BUDGET, NOT AS AN EDIT. Because it zeroes
+     *      `spent`, a live spender who sees the pending update can frontrun it to drain whatever
+     *      room is left on the old grid, let the update reset the counter, then backrun and spend
+     *      up to the limit again — about 2x one period's limit around a single transaction. This is
+     *      distinct from, and stacks with, the ~2x the contract-level PERIOD GRID note already
+     *      describes for a natural rollover.
+     *
+     *      To TIGHTEN a live permission safely, prefer {invalidatePermission} (or {lockdown}) and
+     *      re-grant, or lower only the `limit` — a limit-only update keeps the current period's
+     *      `spent`, so it blocks further spending immediately rather than releasing a fresh window.
+     *      When a grid change is genuinely needed against a hot spender, submit it through a private
+     *      relay.
      *      Changing only `limit` keeps the current period's `spent`: lowering the limit
      *      below what is already spent simply blocks further spending until the next reset.
      *      The permission is addressed by its stable `permissionId` (see {_findPermission}).
