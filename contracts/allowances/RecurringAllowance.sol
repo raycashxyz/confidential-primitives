@@ -434,6 +434,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @notice Batch variant of {transferFrom}. Atomic: if any item hits a cleartext
      *         revert (e.g. `NoPermissions` after a user lockdown), the whole batch
      *         reverts — filter recipients off-chain first, or use {tryTransferFrom}.
+     * @dev Batch size is bounded by the FHEVM per-transaction budget, not by this contract. Items
+     *      share no FHE work, so cost is the sum over items and depends on each payer's active
+     *      tiers — see {activePermissionCount}, which exists to size this off-chain.
      */
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
@@ -453,6 +456,14 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      not catchable), as does a `token` address with no code (the compiler's
      *      extcodesize check reverts outside try/catch) — both are the caller's own
      *      inputs to get right.
+     *
+     *      Exhausting the FHEVM per-transaction budget is NOT skipped. Permission evaluation runs
+     *      before the `try` opens, so an over-large batch reverts in full — including the items that
+     *      would have fit — with `HCULimit`'s `HCUTransactionLimitExceeded` or
+     *      `HCUTransactionDepthLimitExceeded` naming the budget that was exceeded. Cost is the sum
+     *      over items and depends on each payer's active tiers, so one payer with more tiers than
+     *      expected lowers the ceiling for the rest of the batch. Size batches with
+     *      {activePermissionCount}.
      * @return executed Per-item flags: true if the token transfer was executed
      *         (its encrypted outcome may still be zero).
      */
@@ -565,6 +576,47 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     function getPermissionCount(address user, address token, address spender) external view returns (uint256) {
         return _permissions[user][token][spender].length;
+    }
+
+    /**
+     * @notice How many permissions a spend against this key would evaluate right now — the count
+     *         that drives its FHE cost. Excludes expired and not-yet-started entries, exactly as
+     *         {_evaluatePermissions} does; {getPermissionCount} counts stored entries instead.
+     * @dev Size batches with this. Each item in {transferFrom} and {tryTransferFrom} evaluates its
+     *      OWN payer's permission set and shares nothing with the others, so a batch's FHE cost is
+     *      the sum over its items and one payer's tiers move the ceiling for everyone else in the
+     *      call. From this repo's benchmark, a single transfer costs ~1,957,000 HCU at 2 active
+     *      permissions, ~3,301,000 at 4 and ~5,989,000 at 8, against a 20,000,000 per-transaction
+     *      budget — so roughly 10, 6 and 3 items respectively, and a mixed batch is bounded by its
+     *      total. Ten two-tier payments settle; let one payer reach eight tiers and the same batch
+     *      exceeds the budget and reverts.
+     *
+     *      Treat those figures as a floor and this as a planning view, not an on-chain guard: the
+     *      same budget also pays for the token's own `confidentialTransferFrom`, which this contract
+     *      cannot measure and whose cost can change under it (a hooked token gaining modules). An
+     *      over-budget batch reverts in full rather than skipping the items that did not fit.
+     *
+     *      The count applies the spend path's own active test, so a client filtering on
+     *      `startTime`/`endTime` itself cannot disagree with it — note `endTime` expiry is INCLUSIVE.
+     *
+     *      The separate 5,000,000 DEPTH budget can also bind, though it usually does not: within an
+     *      item the checks are ANDed serially, and across items `spent` chains one `FHE.add` per
+     *      repeat of the SAME (user, token, spender) key. Batches that hit one payer many times
+     *      should account for that as well.
+     */
+    function activePermissionCount(
+        address user,
+        address token,
+        address spender
+    ) external view returns (uint256 count) {
+        Permission[] storage permissions = _permissions[user][token][spender];
+        uint64 nowTs = uint64(block.timestamp);
+        uint256 len = permissions.length;
+        for (uint256 i = 0; i < len; ) {
+            Permission storage permission = permissions[i];
+            if (nowTs <= permission.endTime && nowTs >= permission.startTime) count++;
+            unchecked { ++i; }
+        }
     }
 
     function getGrantedPairCount(address user) external view returns (uint256) {

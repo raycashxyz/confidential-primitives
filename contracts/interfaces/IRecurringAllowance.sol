@@ -333,6 +333,15 @@ interface IRecurringAllowance {
     /// @notice Number of permissions stored for the (user, token, spender) key.
     function getPermissionCount(address user, address token, address spender) external view returns (uint256);
 
+    /// @notice How many permissions a spend against the key would evaluate right now (excludes
+    ///         expired and not-yet-started entries) — the count that drives its FHE cost. Use it to
+    ///         size `transferFrom`/`tryTransferFrom` batches against the per-transaction budget.
+    function activePermissionCount(
+        address user,
+        address token,
+        address spender
+    ) external view returns (uint256);
+
     /// @notice Number of (token, spender) pairs for which `user` has stored permissions.
     function getGrantedPairCount(address user) external view returns (uint256);
 
