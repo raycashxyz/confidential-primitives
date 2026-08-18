@@ -116,8 +116,13 @@ interface IRecurringAllowance {
     error InvalidSpenderAddress();
     /// @dev The (effective) end time is in the past or not after the start time.
     error InvalidEndTime();
-    /// @dev No permission exists at `permissionIndex` for the given key.
-    error PermissionNotFound(uint256 permissionIndex);
+    /// @dev The (user, token, spender) key has no permission with this stable id.
+    error PermissionNotFound(uint256 permissionId);
+    /// @dev `permissionIndex` is past the end of the key's permission array. Indices are not stable
+    ///      across writes (swap-and-pop), so re-read before indexing — or address by id instead.
+    error PermissionIndexOutOfRange(uint256 permissionIndex);
+    /// @dev `pairIndex` is past the end of the user's granted-pair enumeration.
+    error GrantedPairIndexOutOfRange(uint256 pairIndex);
     /// @dev The (user, token, spender) key has no active permission to spend against.
     error NoPermissions();
     /// @dev Adding one more permission would exceed {RecurringAllowance-MAX_PERMISSIONS}.

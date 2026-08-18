@@ -513,7 +513,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint256 permissionIndex
     ) external view returns (Permission memory) {
         Permission[] storage permissions = _permissions[user][token][spender];
-        if (permissionIndex >= permissions.length) revert PermissionNotFound(permissionIndex);
+        if (permissionIndex >= permissions.length) revert PermissionIndexOutOfRange(permissionIndex);
         return permissions[permissionIndex];
     }
 
@@ -542,7 +542,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory) {
-        if (index >= _grantedPairs[user].length) revert PermissionNotFound(index);
+        if (index >= _grantedPairs[user].length) revert GrantedPairIndexOutOfRange(index);
         return _grantedPairs[user][index];
     }
 

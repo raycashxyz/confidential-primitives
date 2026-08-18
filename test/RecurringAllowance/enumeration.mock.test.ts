@@ -82,7 +82,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     // getGrantedPairAt reverts cleanly (not a bare panic) past the end.
     await assertRevertsWith(
       allowance.read.getGrantedPairAt([user, 1n]),
-      "PermissionNotFound",
+      "GrantedPairIndexOutOfRange",
     );
   });
 
