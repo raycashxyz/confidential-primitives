@@ -342,6 +342,25 @@ describe("RecurringAllowance: permission lifecycle", () => {
       ], txOpts(alice.account)),
       "InvalidEndTime",
     );
+
+    // A VALID replacement limit alongside an invalid window must still be rejected on the
+    // cleartext window, without the caller paying for proof verification or the ACL grants.
+    const { handle, inputProof } = await S.encAmount(allowance.address, alice.account.address, 900n);
+    await assertRevertsWith(
+      allowance.write.updatePermission([
+        token.address,
+        bob.account.address,
+        permissionId,
+        handle,
+        inputProof,
+        0n,
+        0n,
+        nowTs - 1n
+      ], txOpts(alice.account)),
+      "InvalidEndTime",
+    );
+    const untouched = await S.getPermission(alice.account.address, bob.account.address, 0n);
+    expect(await S.decryptAllowanceHandle(untouched.limit, alice)).toBe(500n);
   });
 
   it("invalidates a single permission and leaves the rest", async () => {

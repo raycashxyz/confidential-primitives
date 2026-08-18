@@ -303,6 +303,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
         Permission storage permission = permissions[_findPermission(permissions, permissionId)];
 
+        // Cleartext first: every reason to reject this call is knowable without touching a
+        // ciphertext, while `FHE.fromExternal` pays for coprocessor proof verification and three
+        // ACL grants that a revert would only roll back. {_validateNewPermission} already
+        // establishes this order on the creation path.
+        bool gridChanged = _applyWindowUpdate(permission, duration, startTime, endTime);
+
         if (inputProof.length > 0) {
             euint64 eLimit = FHE.fromExternal(limit, inputProof);
             permission.limit = eLimit;
@@ -310,22 +316,6 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             FHE.allow(eLimit, msg.sender);
             FHE.allow(eLimit, spender);
         }
-
-        bool gridChanged;
-        if (duration != 0 && duration != permission.duration) {
-            permission.duration = duration;
-            gridChanged = true;
-        }
-        if (startTime != 0 && startTime != permission.startTime) {
-            permission.startTime = startTime;
-            gridChanged = true;
-        }
-        if (endTime != 0) {
-            permission.endTime = endTime;
-        }
-        // The permission must come out of an update live or future-dated; expiring one
-        // is invalidatePermission's job.
-        _checkWindow(permission.startTime, permission.endTime);
 
         if (gridChanged) {
             permission.spent = E_ZERO;
@@ -795,6 +785,37 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (!SignatureChecker.isValidSignatureNowCalldata(owner, _hashTypedDataV4(structHash), signature)) {
             revert InvalidSigner();
         }
+    }
+
+    /**
+     * @dev Cleartext half of {updatePermission}: resolve the zero-sentinels against the stored
+     *      record, validate the resulting window, commit the time fields, and report whether the
+     *      period grid moved.
+     *
+     *      Split out so the whole cleartext decision — including the {InvalidEndTime} revert —
+     *      happens before any ciphertext import, and because holding the three resolved values
+     *      inline alongside the rest of `updatePermission` overflows the stack.
+     *
+     *      A permission must come out of an update live or future-dated; expiring one is
+     *      {invalidatePermission}'s job. Re-submitting the SAME value is not a change, so a wallet
+     *      echoing back a full record cannot silently refresh the budget.
+     */
+    function _applyWindowUpdate(
+        Permission storage permission,
+        uint64 duration,
+        uint64 startTime,
+        uint64 endTime
+    ) private returns (bool gridChanged) {
+        uint64 newDuration = duration == 0 ? permission.duration : duration;
+        uint64 newStartTime = startTime == 0 ? permission.startTime : startTime;
+        uint64 newEndTime = endTime == 0 ? permission.endTime : endTime;
+        _checkWindow(newStartTime, newEndTime);
+
+        gridChanged = newDuration != permission.duration || newStartTime != permission.startTime;
+
+        permission.duration = newDuration;
+        permission.startTime = newStartTime;
+        permission.endTime = newEndTime;
     }
 
     /**
