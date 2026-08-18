@@ -71,7 +71,9 @@ Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm
 | 32 | 3,171,172 | 1,803,729 |
 | 48 | 4,560,801 | 2,507,389 |
 
-Batched is cheaper at every size and scales to a full 48-slot set; continuous costs more per decoy and reverts at 48 here. The gap is that continuous does more encrypted work per deposit: it matches against an encrypted recipient and rewrites each scanned deposit's amount in storage, where batched matches a cleartext recipient and uses a plain `(batch, recipient)` nullifier. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
+Batched is cheaper at every size. The gap is that continuous does more encrypted work per deposit: it rewrites each scanned deposit's amount in storage, where batched leaves the slot alone and relies on a plain `(batch, recipient)` nullifier. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
+
+**Size these against your wrapper, not against this table.** The numbers above are measured against a bare mock wrapper, and `MAX_BATCH_LIMIT` / `MAX_MIN_DECOYS` bound the *adapter's* own FHE work. `finalizeWrap` also calls the wrapper, and whatever its `_update` costs comes out of the same per-transaction budget — an `ERC7984Hooked` wrapper with a few modules can add millions of HCU and push a full 48-slot scan over the limit. That cost isn't even fixed at deploy time: a hooked wrapper's admin can `installModule` *after* deposits are escrowed, and neither `maxBatchDeposits` nor `minDecoys` can be lowered in response. Deposits keep succeeding, and because a batch's nullifier is all-or-nothing you can't scan it in parts to get under budget. Calibrate against the target wrapper's post-module transfer cost, leave real headroom, and prefer a wrapper whose FHE cost can't change under you.
 
 ### Privacy model
 

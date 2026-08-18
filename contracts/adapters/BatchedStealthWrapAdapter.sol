@@ -62,6 +62,24 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     ///      48 leaves ~15-20% headroom.
     ///      NOTE the budget applies to TOTAL SLOTS SCANNED PER CALL: near the cap,
     ///      finalize one batch per call; multi-batch calls suit smaller batch sizes.
+    ///
+    ///      THAT HEADROOM COVERS THE ADAPTER'S OWN WORK ONLY. `_transferWrapped` calls into the
+    ///      configured wrapper, and whatever its `_update` costs comes out of the SAME
+    ///      per-transaction budget — a cost this constant cannot see, because the wrapper is a
+    ///      constructor argument. An `ERC7984Hooked` wrapper carrying a few modules can add
+    ///      millions of HCU for hook aggregation and pre/post-transfer work, which is enough to
+    ///      push a full 48-slot scan over the limit.
+    ///
+    ///      Worse, that cost is not fixed at deployment: a hooked wrapper's admin can
+    ///      `installModule` AFTER deposits are already escrowed, so a batch calibrated against a
+    ///      clean wrapper can become unfinalizable later. `initWrap` keeps succeeding either way,
+    ///      and the all-or-nothing nullifier means a batch cannot be scanned in parts to get under
+    ///      the budget. The continuous adapter has the same exposure through `minDecoys`, which is
+    ///      immutable and cannot be lowered in response.
+    ///
+    ///      So `maxBatchDeposits` must be sized against the TARGET WRAPPER's post-module transfer
+    ///      cost, not against a bare-mock measurement, and this cap is a ceiling rather than a
+    ///      recommendation. Prefer a wrapper whose FHE cost cannot change under you.
     uint256 private constant MAX_BATCH_LIMIT = 48;
 
     uint256 public immutable maxBatchDeposits;
