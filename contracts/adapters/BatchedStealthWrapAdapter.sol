@@ -192,7 +192,13 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
         uint256 batchIndex = batch.fillCount;
 
+        // Persist access to BOTH stored ciphertexts. `_wrapIntoEscrow` already allows the amount on
+        // the bundled path, but this is the advertised storage boundary for derived adapters that
+        // source confidential funds another way — and those may hold only TRANSIENT authorization,
+        // which expires at the end of the transaction and would leave finalize unable to touch
+        // `eAmount`, permanently unfinalizing the deposit. Re-granting is idempotent.
         FHE.allowThis(verifiedRecipient);
+        FHE.allowThis(eAmount);
 
         slot = batchId * maxBatchDeposits + batchIndex;
         deposits[slot] = Deposit({
