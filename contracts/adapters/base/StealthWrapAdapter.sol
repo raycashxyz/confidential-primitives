@@ -121,8 +121,20 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
-    /// @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
-    ///      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
+    /**
+     * @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
+     *      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
+     *
+     *      NOTE FOR WRAPPERS WITH TRANSFER RESTRICTIONS: the adapter, not the depositor, is the
+     *      wrapper's counterparty. It pulls the underlying itself and then calls
+     *      `wrap(address(this), amount)`, so a wrapper that gates on `msg.sender` or the wrap
+     *      recipient — a deny-list, an allow-list, a compliance module — sees only this adapter and
+     *      passes. A depositor whom the wrapper would have blocked on a direct `wrap` can therefore
+     *      still originate one through here, as long as the plain ERC-20 transfer succeeds. That is
+     *      inherent to interposing a contract, not something the adapter can detect; a wrapper
+     *      operator who wants those checks enforced must apply them to the adapter's own deposit
+     *      path or decline to have an adapter pointed at it.
+     */
     function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
         if (amount == 0) revert ZeroAmount();
 
