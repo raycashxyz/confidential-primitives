@@ -75,7 +75,8 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @notice Batch currently accepting deposits.
     uint256 public currentBatchId;
 
-    /// @notice Total deposits recorded across all batches.
+    /// @notice Total deposits recorded across all batches. This is the COUNT; use
+    ///         {getDepositsLength} to enumerate, since slot indices are sparse.
     uint256 public totalDeposits;
 
     /// @notice Global slot index (batchId * maxBatchDeposits + batchIndex) => deposit.
@@ -137,8 +138,17 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         sealDelay = _sealDelay;
     }
 
+    /**
+     * @notice EXCLUSIVE upper bound for enumerating deposit slots, NOT the number of deposits
+     *         (that is {totalDeposits}).
+     * @dev Slots are sparse here: a batch sealed before it filled leaves its remaining slots empty
+     *      for good, so with `maxBatchDeposits = 4` and one deposit in each of batches 0 and 1 the
+     *      live slots are 0 and 4. This returns 5 — the exclusive bound — while {totalDeposits}
+     *      returns 2. Enumerating `[0, totalDeposits)` would have missed the deposit at slot 4.
+     */
     function getDepositsLength() external view override returns (uint256) {
-        return totalDeposits;
+        uint256 batchId = currentBatchId;
+        return batchId * maxBatchDeposits + _batches[batchId].fillCount;
     }
 
     function batchFillCount(uint256 batchId) public view returns (uint256) {

@@ -151,6 +151,7 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(deposit[0]).toBe(alice.account.address);
       expect(deposit[1]).toBe(AMOUNT);
       expect(await wrapper.read.batchFillCount([0n])).toBe(1n);
+      expect(await wrapper.read.totalDeposits()).toBe(1n);
       expect(await wrapper.read.getDepositsLength()).toBe(1n);
       expect(await underlying.read.balanceOf([confidentialWrapper.address])).toBe(AMOUNT);
     });

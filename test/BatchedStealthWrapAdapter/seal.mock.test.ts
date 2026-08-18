@@ -5,7 +5,7 @@
 import {
   describe, it, expect
 } from "vitest";
-import { parseEventLogs } from "viem";
+import { parseEventLogs, zeroAddress } from "viem";
 
 import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
@@ -60,6 +60,28 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     await warpTime(20n);
     await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
     expect(await wrapper.read.batchClosed([0n])).toBe(true);
+  });
+
+  // Slots are indexed batchId * maxBatchDeposits + batchIndex, so sealing a partial batch leaves
+  // its unused slots empty forever. Enumerating [0, totalDeposits) would walk right past the
+  // deposits that live after the gap.
+  it("reports a slot bound that spans the gap left by a sealed partial batch", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, send, warpTime
+    } = await boot();
+    const { alice } = wallets;
+    const { contract: wrapper } = await deployWrapper(4n);
+    await fundAndApprove(wrapper, alice, 2n);
+
+    await initWrap(wrapper, alice, alice.account.address); // slot 0, batch 0
+    await warpTime(SEAL_DELAY + 1n);
+    await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
+    await initWrap(wrapper, alice, alice.account.address); // slot 4, batch 1
+
+    expect(await wrapper.read.totalDeposits()).toBe(2n);
+    expect(await wrapper.read.getDepositsLength()).toBe(5n); // slots 1..3 are permanently empty
+    expect((await wrapper.read.deposits([4n]))[0]).toBe(alice.account.address);
+    expect((await wrapper.read.deposits([1n]))[0]).toBe(zeroAddress);
   });
 
   it("reverts on an empty batch", async () => {

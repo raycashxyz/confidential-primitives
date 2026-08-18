@@ -32,6 +32,14 @@ interface IStealthWrapAdapter {
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);
     function rate() external view returns (uint256);
+
+    /// @notice EXCLUSIVE upper bound for enumerating deposit slots: every recorded deposit lives at
+    ///         some `slot < getDepositsLength()`.
+    /// @dev Not necessarily the NUMBER of deposits. An adapter may index slots sparsely — the
+    ///      batched one uses `batchId * maxBatchDeposits + batchIndex`, so a partially filled batch
+    ///      that gets sealed leaves its unused slots empty forever. Readers must therefore treat
+    ///      this as a bound and skip empty slots (an unwritten `deposits(slot)` has a zero
+    ///      depositor), not as a count. Where a true count exists it is exposed separately.
     function getDepositsLength() external view returns (uint256);
 
     /// @notice Deposit clear ERC20 into escrow with an encrypted recipient.
