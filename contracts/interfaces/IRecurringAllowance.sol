@@ -104,7 +104,10 @@ interface IRecurringAllowance {
         /// @dev No active permission window for (from, token, spender).
         NO_PERMISSIONS,
         /// @dev The token call reverted (e.g. this contract is not an operator for `from`).
-        TOKEN_CALL_FAILED
+        TOKEN_CALL_FAILED,
+        /// @dev The token returned a handle it is not itself authorized on (see
+        ///      {RecurringAllowance-transferFrom}); nothing was recorded for the item.
+        INVALID_RETURN_HANDLE
     }
 
     /// @dev `token` is the zero address.
@@ -130,6 +133,10 @@ interface IRecurringAllowance {
     error SpenderMismatch();
     /// @dev The permit binds a recipient and `to` differs from it.
     error RecipientMismatch();
+    /// @dev The `token` returned an encrypted handle that it is not itself ACL-authorized on, so it
+    ///      cannot be a value the token computed. Accepting it would launder a third party's
+    ///      ciphertext into the caller's own decryptable state.
+    error InvalidReturnedHandle();
     /// @dev A permission-creating call was given an empty `inputProof`. Creation always needs a
     ///      real proof so the coprocessor type-checks the limit as `Uint64`; only
     ///      {RecurringAllowance-updatePermission} reads an empty proof as "leave the limit alone".

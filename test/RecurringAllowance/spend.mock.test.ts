@@ -4,9 +4,125 @@ import { getAddress, parseEventLogs } from "viem";
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
 import { DAY, WEEK, useAllowanceSuite } from "./setup/suite";
+import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
 
 describe("RecurringAllowance: spending", () => {
   const S = useAllowanceSuite();
+
+  /**
+   * Stand up a hostile token with a working permission behind it: the attacker holds a balance,
+   * has made the allowance an operator, and has granted themselves a permission on it. The token
+   * still behaves honestly until `setStolenHandle` arms it.
+   */
+  const armHostileToken = async () => {
+    const { H, allowance } = S.ctx();
+    const { deployer, bob } = H.wallets;
+
+    const { contract: evil } = await getOrDeployMockHandleStealingToken({
+      walletClient: deployer,
+      publicClient: H.publicClient,
+      store: H.store,
+      args: [],
+      force: true,
+    });
+
+    const { handle, inputProof } = await S.encAmount(evil.address, bob.account.address, 10_000n);
+    await S.sendOk(evil.write.mint([bob.account.address, handle, inputProof], fheTxOpts(bob.account)));
+    const until = Number(await S.now()) + 3_153_600_000;
+    await S.sendOk(evil.write.setOperator([allowance.address, until], txOpts(bob.account)));
+    await S.setPermission({
+      user: bob,
+      spender: bob.account.address,
+      limit: 5_000n,
+      tokenAddr: evil.address
+    });
+
+    return evil;
+  };
+
+  // Handles are global, not namespaced per token, and `token` is caller-supplied. This contract is
+  // permanently ACL-allowed on every user's limit/spent (it calls allowThis on them) and those
+  // handles are public, so a token that returns someone else's handle would have it added into the
+  // attacker's own `spent` and then granted to the attacker to decrypt.
+  it("rejects a token-returned handle the token itself is not authorized on", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    // The victim: an ordinary permission whose encrypted limit is public via getPermission.
+    await S.setPermission({
+      user: alice,
+      spender: carol.account.address,
+      limit: 1234n
+    });
+    const victim = await S.getPermission(alice.account.address, carol.account.address, 0n);
+
+    const evil = await armHostileToken();
+
+    // Same setup, still honest: proves the revert below is the substitution and not a broken fixture.
+    await S.spend({
+      spender: bob,
+      from: bob.account.address,
+      to: carol.account.address,
+      amount: 100n,
+      tokenAddr: evil.address
+    });
+
+    await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
+
+    const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.transferFrom([
+        bob.account.address,
+        carol.account.address,
+        handle,
+        inputProof,
+        evil.address
+      ], txOpts(bob.account)),
+      "InvalidReturnedHandle",
+    );
+
+    // The victim's limit stayed hers: bob never got a handle he could decrypt.
+    await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
+  });
+
+  it("skips (does not revert) a stolen return handle inside tryTransferFrom", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    await S.setPermission({
+      user: alice,
+      spender: carol.account.address,
+      limit: 1234n
+    });
+    const victim = await S.getPermission(alice.account.address, carol.account.address, 0n);
+
+    const evil = await armHostileToken();
+    await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
+
+    const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 100n);
+    const receipt = await S.sendOk(allowance.write.tryTransferFrom([[{
+      from: bob.account.address,
+      to: carol.account.address,
+      amount: handle,
+      inputProof,
+      token: evil.address
+    }]], fheTxOpts(bob.account)));
+
+    // INVALID_RETURN_HANDLE = 3. The batch survives; only the poisoned item is dropped.
+    const [skipped] = parseEventLogs({
+      abi: allowance.abi,
+      logs: receipt.logs,
+      eventName: "TransferSkipped"
+    });
+    expect(skipped.args.reason).toBe(3);
+    const attackerPermission = await allowance.read.getPermission([
+      bob.account.address,
+      evil.address,
+      bob.account.address,
+      0n
+    ]);
+    expect(await S.decryptAllowanceHandle(attackerPermission.spent, bob)).toBe(0n);
+  });
 
   it("moves funds when permitted and records spent for both parties", async () => {
     const { H, token, allowance } = S.ctx();

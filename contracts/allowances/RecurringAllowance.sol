@@ -505,6 +505,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
         FHE.allowTransient(eAmount, permit.token);
         transferred = IERC7984(permit.token).confidentialTransferFrom(owner, to, eAmount);
+        if (!_isTokenAuthored(permit.token, transferred)) revert InvalidReturnedHandle();
         FHE.allowTransient(transferred, msg.sender);
 
         emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
@@ -591,6 +592,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         // The token computes over the handle during this call only.
         FHE.allowTransient(eTransferAmount, token);
         transferred = IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount);
+        if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
 
         _recordSpend(from, token, msg.sender, transferred);
 
@@ -617,6 +619,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         FHE.allowTransient(eTransferAmount, token);
         try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
+            // Skip rather than revert: this branch runs in OUR frame, so reverting here would take
+            // down the whole batch — exactly what tryTransferFrom exists to avoid.
+            if (!_isTokenAuthored(token, transferred)) {
+                emit TransferSkipped(from, to, token, msg.sender, SkipReason.INVALID_RETURN_HANDLE);
+                return false;
+            }
             _recordSpend(from, token, msg.sender, transferred);
             FHE.allowTransient(transferred, msg.sender);
             emit AllowanceTransfer(from, to, token, msg.sender, transferred);
@@ -728,6 +736,32 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // -----------------------------------------------------------------------
     // Shared helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * @dev Could `token` have computed `handle`? Ciphertext handles are global, not namespaced per
+     *      token, and `token` is a caller-supplied address — so without this check a malicious token
+     *      can return ANY handle in place of a transfer result.
+     *
+     *      That is not a theoretical substitution. This contract calls `FHE.allowThis` on every
+     *      user's `limit` and `spent`, so it is permanently authorized on all of them, and those
+     *      handles are public (returned by {getPermission}, emitted in {PermissionSet}). An attacker
+     *      registers a permission on a token they wrote, has it return a victim's `limit` handle,
+     *      and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)` — which passes, because WE
+     *      are allowed on both — then grants the sum to the attacker, who knows their own `spent`
+     *      and subtracts it. {permitTransferFrom} is more direct still: it forwards the returned
+     *      handle straight to `msg.sender` via `allowTransient`, which a contract caller persists.
+     *
+     *      An honestly-computed result is always authorized to its own token: OZ's `ERC7984._update`
+     *      ends with `FHE.allowThis(transferred)`. A third party's ciphertext is not. (OZ applies the
+     *      mirror image of this check to amounts callers hand IN — `ERC7984UnauthorizedUseOfEncryptedAmount`.)
+     *
+     *      Uninitialized is rejected too: an uninitialized handle would revert inside `_recordSpend`'s
+     *      `FHE.add` anyway, and that revert sits in the lenient path's success branch where it would
+     *      take the whole batch down instead of skipping one item.
+     */
+    function _isTokenAuthored(address token, euint64 handle) private view returns (bool) {
+        return FHE.isInitialized(handle) && FHE.isAllowed(handle, token);
+    }
 
     /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271). Binds `owner` and
     ///      the current {permitEpoch} into the digest (see the type-hash note).

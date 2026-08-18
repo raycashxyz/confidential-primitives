@@ -6,6 +6,7 @@ import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
 import { DAY, useAllowanceSuite } from "./setup/suite";
 import type { PermitGrantMessage, PermitSpendMessage } from "./setup/suite";
+import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
 
 describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   const S = useAllowanceSuite();
@@ -61,12 +62,13 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     nonce?: bigint;
     epoch?: bigint;
     sigDeadline?: bigint;
+    tokenAddr?: Hex;
   }) => {
     const { H, token, allowance } = S.ctx();
     const owner = H.wallets[params.owner];
     const { handle, inputProof } = await S.encAmount(allowance.address, params.spender, params.cap);
     const permit: SpendStruct = {
-      token: token.address,
+      token: params.tokenAddr ?? token.address,
       spender: params.spender,
       capHandle: handle,
       to: params.to ?? zeroAddress,
@@ -85,6 +87,84 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       signature
     };
   };
+
+  // The cheque path is the most direct version of the stolen-return-handle attack: it hands the
+  // token's return value straight to `msg.sender` via allowTransient, so a contract spender can
+  // persist it with FHE.allow in the same transaction — no laundering through `spent` and no
+  // arithmetic inference needed, unlike the transferFrom paths. Same provenance check guards it.
+  it("rejects a token-returned handle the token is not authorized on, through the cheque path", async () => {
+    const { H, allowance } = S.ctx();
+    const { deployer, alice, bob, carol } = H.wallets;
+
+    // The victim: carol's encrypted limit, public via getPermission and never the evil token's.
+    await S.setPermission({
+      user: carol,
+      spender: alice.account.address,
+      limit: 4321n
+    });
+    const victim = await S.getPermission(carol.account.address, alice.account.address, 0n);
+
+    // A hostile token the cheque owner holds balance in, with the allowance as its operator.
+    const { contract: evil } = await getOrDeployMockHandleStealingToken({
+      walletClient: deployer,
+      publicClient: H.publicClient,
+      store: H.store,
+      args: [],
+      force: true,
+    });
+    const minted = await S.encAmount(evil.address, alice.account.address, 10_000n);
+    await S.sendOk(evil.write.mint([
+      alice.account.address,
+      minted.handle,
+      minted.inputProof
+    ], fheTxOpts(alice.account)));
+    const until = Number(await S.now()) + 3_153_600_000;
+    await S.sendOk(evil.write.setOperator([allowance.address, until], txOpts(alice.account)));
+
+    // Still honest here, so the revert below is the substitution rather than a broken fixture.
+    const honest = await makeCheque({
+      owner: "alice",
+      spender: bob.account.address,
+      cap: 500n,
+      tokenAddr: evil.address
+    });
+    const firstRequest = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await S.sendOk(allowance.write.permitTransferFrom([
+      alice.account.address,
+      honest.permit,
+      honest.capProof,
+      firstRequest.handle,
+      firstRequest.inputProof,
+      carol.account.address,
+      honest.signature
+    ], fheTxOpts(bob.account)));
+
+    await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
+
+    const armed = await makeCheque({
+      owner: "alice",
+      spender: bob.account.address,
+      cap: 500n,
+      nonce: 1n,
+      tokenAddr: evil.address
+    });
+    const request = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.permitTransferFrom([
+        alice.account.address,
+        armed.permit,
+        armed.capProof,
+        request.handle,
+        request.inputProof,
+        carol.account.address,
+        armed.signature
+      ], txOpts(bob.account)),
+      "InvalidReturnedHandle",
+    );
+
+    // Carol's limit stayed hers: bob never received a handle he could decrypt.
+    await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
+  });
 
   it("creates a permission gaslessly for the owner: sign off-chain, spender submits", async () => {
     const { H, allowance } = S.ctx();
