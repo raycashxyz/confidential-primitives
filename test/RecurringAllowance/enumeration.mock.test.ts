@@ -47,7 +47,6 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idA
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(2n);
@@ -56,7 +55,6 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idB
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(1n);
