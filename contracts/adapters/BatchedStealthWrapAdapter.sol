@@ -181,11 +181,15 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     ) internal returns (uint256 slot) {
         uint256 batchId = currentBatchId;
         Batch storage batch = _batches[batchId];
-        if (batch.closed || batch.fillCount == maxBatchDeposits) {
-            if (!batch.closed) _closeBatchUnchecked(batchId, batch);
-            batchId = currentBatchId;
-            batch = _batches[batchId];
-        }
+        // INVARIANT: the batch at `currentBatchId` is always open with room. Everything that fills
+        // or closes a batch bumps `currentBatchId` in the same breath (see {_closeBatchUnchecked}
+        // and the fill check at the end of this function), so no shipped path can violate this.
+        //
+        // It is asserted rather than recovered from because the recovery this replaced was wrong:
+        // it re-read the unchanged `currentBatchId` and handed back the SAME closed batch, so a
+        // deposit would have landed in a batch whose anonymity set is already frozen — and one
+        // whose nullifier a recipient may have already consumed, stranding the match forever.
+        if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
         uint256 batchIndex = batch.fillCount;
 
         FHE.allowThis(verifiedRecipient);
