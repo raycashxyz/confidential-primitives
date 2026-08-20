@@ -176,6 +176,13 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *      empty-proof gate nor the direct-`verifyInput` import is part of that hook, and neither is
      *      overridable — a derived adapter can relax freshness without being handed a way to relax the
      *      type check or to reintroduce the depositor-ACL leak.
+     *
+     *      THE CALLER MUST PERSIST ACCESS TO THE RETURNED HANDLE. What the import grants is the
+     *      adapter's TRANSIENT access, which expires with the transaction, so an adapter that stores
+     *      the handle without `FHE.allowThis` leaves a deposit finalize can never match again. This
+     *      is not done here because a handle that is imported and discarded needs no grant: the grant
+     *      belongs where the handle is stored. {BatchedStealthWrapAdapter-_recordBatchedDeposit} is
+     *      the worked example — it persists both ciphertexts it records.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
         if (inputProof.length == 0) revert MissingInputProof();
