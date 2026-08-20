@@ -26,12 +26,17 @@ interface IStealthWrapAdapter {
     error InvalidMinDecoys();
     /// @dev Runtime finalize error: the selected decoy set is smaller than minDecoys.
     error TooFewDecoys();
-    /// @dev The finalize id set is empty, or names a unit that does not exist.
+    /// @dev The finalize id set is empty, or names a unit the adapter rejects outright. The
+    ///      continuous adapter raises it for a deposit index past the end of the pool; the batched
+    ///      one raises it only for an empty set, because an id whose batch does not exist is not
+    ///      closed and so reverts `BatchNotClosed` first.
     error InvalidId();
     /// @dev The finalize id set is not strictly ascending (unsorted or containing duplicates).
     error DuplicateId();
-    /// @dev `initWrap` was called with an empty `inputProof`. Adapters require a real proof so the
-    ///      coprocessor type-checks the handle as `Uint160` — see {StealthWrapAdapter-_verifyRecipient}.
+    /// @dev A deposit entry point was called with an empty `inputProof` — `initWrap`, and any other
+    ///      an adapter exposes, such as the batched adapter's `initWrapInto`. Adapters require a real
+    ///      proof so the coprocessor type-checks the handle as `Uint160` — see
+    ///      {StealthWrapAdapter-_verifyRecipient}.
     error MissingInputProof();
     /// @dev This encrypted-recipient handle has already funded a deposit. Handles are single-use:
     ///      reusing one publicly links the deposits. Ask the recipient for a fresh encryption.

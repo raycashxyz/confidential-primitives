@@ -3,7 +3,9 @@ import { getAddress, parseEventLogs } from "viem";
 
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
-import { DAY, WEEK, useAllowanceSuite } from "./setup/suite";
+import {
+  DAY, WEEK, SKIP_INVALID_RETURN_HANDLE, useAllowanceSuite
+} from "./setup/suite";
 import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
 
 describe("RecurringAllowance: spending", () => {
@@ -108,13 +110,14 @@ describe("RecurringAllowance: spending", () => {
       token: evil.address
     }]], fheTxOpts(bob.account)));
 
-    // INVALID_RETURN_HANDLE = 3. The batch survives; only the poisoned item is dropped.
+    // The batch survives; only the poisoned item is dropped.
     const [skipped] = parseEventLogs({
       abi: allowance.abi,
       logs: receipt.logs,
       eventName: "TransferSkipped"
     });
-    expect(skipped.args.reason).toBe(3);
+    if (!skipped) throw new Error("no TransferSkipped event");
+    expect(skipped.args.reason).toBe(SKIP_INVALID_RETURN_HANDLE);
     const attackerPermission = await allowance.read.getPermission([
       bob.account.address,
       evil.address,

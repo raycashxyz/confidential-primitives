@@ -37,6 +37,7 @@ type Adapter = Awaited<ReturnType<typeof getOrDeployBatchedStealthWrapAdapter>>[
 const NORMAL = 0;
 const BLOCK = 1;
 const PARTIAL = 2;
+const OVER_REPORT = 3;
 
 describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
   let H: Harness;
@@ -173,6 +174,33 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
       expect(await balanceOf(alice)).toBeLessThanOrEqual(AMOUNT * 2n); // never overpays
     }
     expect(await balanceOf(alice)).toBe(AMOUNT * 2n); // converged to exactly matched
+  });
+
+  // A wrapper that lies UPWARD about how much it moved must not overpay or brick the batch.
+  //
+  // NOTE this does not isolate the `FHE.min` clamp in `_creditedAmount`: without it `claimed` would
+  // exceed `matched` and the next `matched - claimed` would wrap near 2^64, but OZ soft-fails that
+  // oversized transfer to zero (escrow is nowhere near 2^64), so the balances below look the same
+  // either way. The clamp is there to keep `claimed <= matched` structurally true — which is what
+  // `claimedAmount` reports and what an exact-or-revert wrapper would otherwise revert on forever.
+  // What this test does pin is the user-visible guarantee: a lying wrapper cannot extract more than
+  // the matched sum, and the batch stays usable afterwards.
+  it("does not overpay or brick the batch when the wrapper over-reports", async () => {
+    const { alice } = H.wallets;
+    const adapter = await deployAdapter(2n);
+    await fundAndApprove(adapter, alice, 2n);
+    await initWrap(adapter, alice, alice.account.address);
+    await initWrap(adapter, alice, alice.account.address); // matched = 200
+
+    // Moves the honest 200 but claims it moved 250.
+    await setMode(OVER_REPORT, 50n);
+    await finalize(adapter, [0n], alice.account.address, alice);
+    expect(await balanceOf(alice)).toBe(AMOUNT * 2n); // paid exactly matched, not the inflated figure
+
+    // The batch is still usable and pays nothing further: the lie bought the wrapper no extra escrow.
+    await setMode(NORMAL, 0n);
+    await finalize(adapter, [0n], alice.account.address, alice);
+    expect(await balanceOf(alice)).toBe(AMOUNT * 2n);
   });
 
   // A replay of a fully-claimed batch is a no-op: it pays an encrypted zero, does not revert, and

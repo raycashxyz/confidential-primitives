@@ -48,7 +48,7 @@ import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
  *         the narrower guarantee that submitting a well-formed deposit does not leak the recipient to
  *         whoever submitted it, contract or not.
  *
- *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. `FHE.fromExternal` proves the
+ *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. Importing the handle proves the
  *         ciphertext is well-formed and correctly bound; it says nothing about the ADDRESS inside.
  *         The depositor pays before knowing what they paid for, so the handshake requires trusting
  *         whoever produced the handle. A recipient who supplies an encryption of someone else's
@@ -313,9 +313,11 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allowThis(wrappedAmount);
     }
 
-    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`. Unlike
-    ///      {_wrapIntoEscrow}, callers are expected to have committed their claim state (nullifier
-    ///      or zeroed amount) BEFORE calling this — see the contract-level REENTRANCY note.
+    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`. Where the
+    ///      claim state is committed relative to this call differs by adapter — the continuous one
+    ///      zeroes matched amounts BEFORE it, the batched one credits its encrypted `claimed` ledger
+    ///      AFTER it because the credit is this function's return value. Neither is safe without the
+    ///      guard; see the contract-level REENTRANCY note.
     function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));

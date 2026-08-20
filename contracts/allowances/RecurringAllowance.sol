@@ -464,8 +464,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      over items and depends on each payer's active tiers, so one payer with more tiers than
      *      expected lowers the ceiling for the rest of the batch. Size batches with
      *      {activePermissionCount}.
-     * @return executed Per-item flags: true if the token transfer was executed
-     *         (its encrypted outcome may still be zero).
+     * @return executed Per-item flags: true if the item completed and its spend was recorded (the
+     *         encrypted outcome may still be zero). False means the item was skipped — see
+     *         {TransferSkipped} for which reason. NOTE the `INVALID_RETURN_HANDLE` case reports false
+     *         AFTER the token call has already run: a token that moves funds and then returns a
+     *         handle it does not own has its transfer left standing, because reverting here would
+     *         take down the whole batch. Only a malicious token reaches that branch, and one can move
+     *         its own ledger without this contract's help; see {_isTokenAuthored}.
      */
     function tryTransferFrom(TransferDetails[] calldata transfers) external nonReentrant returns (bool[] memory executed) {
         executed = new bool[](transfers.length);

@@ -3,11 +3,9 @@ import { getAddress, parseEventLogs } from "viem";
 
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts } from "../setup/tx";
-import { useAllowanceSuite } from "./setup/suite";
-
-/** SkipReason enum mirror (contract: NONE=0, NO_PERMISSIONS=1, TOKEN_CALL_FAILED=2). */
-const SKIP_NO_PERMISSIONS = 1;
-const SKIP_TOKEN_CALL_FAILED = 2;
+import {
+  SKIP_NO_PERMISSIONS, SKIP_TOKEN_CALL_FAILED, useAllowanceSuite
+} from "./setup/suite";
 
 describe("RecurringAllowance: grant enumeration and lenient batch", () => {
   const S = useAllowanceSuite();

@@ -79,8 +79,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     ///      Worse, that cost is not fixed at deployment: a hooked wrapper's admin can
     ///      `installModule` AFTER deposits are already escrowed, so a batch calibrated against a
     ///      clean wrapper can become unfinalizable later. `initWrap` keeps succeeding either way,
-    ///      and the all-or-nothing nullifier means a batch cannot be scanned in parts to get under
-    ///      the budget. The continuous adapter has the same exposure through `minDecoys`, which is
+    ///      and finalize scans a batch whole — `matched` is recomputed over every slot in it — so a
+    ///      batch cannot be scanned in parts to get under the budget. The continuous adapter has the
+    ///      same exposure through `minDecoys`, which is
     ///      immutable and cannot be lowered in response.
     ///
     ///      So `maxBatchDeposits` must be sized against the TARGET WRAPPER's post-module transfer
@@ -302,8 +303,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         //
         // It is asserted rather than recovered from because the recovery this replaced was wrong:
         // it re-read the unchanged `currentBatchId` and handed back the SAME closed batch, so a
-        // deposit would have landed in a batch whose anonymity set is already frozen — and one
-        // whose nullifier a recipient may have already consumed, stranding the match forever.
+        // deposit would have landed in a batch whose anonymity set is already frozen, and possibly
+        // already scanned. The encrypted `claimed` ledger means the money is not lost (the late
+        // deposit raises `matched`, so a further finalize pays it out), but collecting it requires
+        // re-finalizing a batch observers have already watched settle, which is exactly the linkage
+        // the batch was supposed to hide.
         if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
         uint256 batchIndex = batch.fillCount;
 
@@ -342,9 +346,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     /**
      * @notice Close the current, still-open batch early so its deposits can be
-     *         finalized. Permissionless, but only after `sealDelay` since the last
-     *         deposit. finalizeWrap performs the same close automatically when it
-     *         first sees an eligible open batch.
+     *         finalized. Permissionless, but only after `sealDelay` since the batch's
+     *         FIRST deposit (see {sealDelay} for why the anchor is not the last one).
+     *         finalizeWrap performs the same close automatically when it first sees an
+     *         eligible open batch.
      */
     function sealBatch(uint256 batchId) external nonReentrant {
         if (batchId != currentBatchId) revert NotCurrentBatch();
@@ -411,9 +416,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *      the amount the wrapper reports it ACTUALLY moved — never the amount requested. Two
      *      invariants make this safe:
      *
-     *        - `transferred <= owed` always (a transfer never moves more than asked), so
-     *          `claimed <= matched` holds by induction and `matched - claimed` never underflows.
-     *          A recipient can therefore never be paid more than their matched sum: no double-spend.
+     *        - `credited <= owed` always, so `claimed <= matched` holds by induction and
+     *          `matched - claimed` never underflows. A recipient can therefore never be paid more
+     *          than their matched sum: no double-spend. An honest wrapper never returns more than it
+     *          was asked to move, but this clamps rather than assuming it — see {_creditedAmount}.
      *        - crediting the ACTUAL amount means a wrapper that moved zero (freeze / pause / hook
      *          veto) credits nothing and the whole claim survives for a later retry, and one that
      *          moved only part credits that part and leaves the exact remainder claimable. This is
@@ -448,14 +454,31 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         euint64 owed = FHE.sub(matched, alreadyClaimed);
 
         euint64 transferred = _transferWrapped(recipient, owed);
+        euint64 credited = _creditedAmount(transferred, owed);
 
-        euint64 newClaimed = FHE.add(alreadyClaimed, transferred);
+        euint64 newClaimed = FHE.add(alreadyClaimed, credited);
         FHE.allowThis(newClaimed);
         batch.claimed[recipient] = newClaimed;
 
         uint256[] memory scannedIds = new uint256[](1);
         scannedIds[0] = batchId;
-        emit WrapFinalized(recipient, FHE.toBytes32(transferred), scannedIds);
+        emit WrapFinalized(recipient, FHE.toBytes32(credited), scannedIds);
+    }
+
+    /// @dev What a finalize may add to `claimed`: the amount the wrapper reported, clamped to what
+    ///      was actually owed. An honest wrapper never moves more than it was asked to, so this is a
+    ///      no-op on every supported configuration — but `claimed <= matched` is the invariant that
+    ///      keeps {_finalizeBatch}'s `FHE.sub` from underflowing, and this makes it hold by
+    ///      construction instead of by trusting the wrapper's return value. Without it an
+    ///      over-reporting wrapper pushes `claimed` past `matched`, and since FHE arithmetic WRAPS
+    ///      the next `matched - claimed` becomes ~2^64: against a soft-failing wrapper that oversized
+    ///      request simply moves zero, so the visible effect is a stuck remainder rather than a
+    ///      drain, but against an exact-or-revert one every later finalize for that recipient reverts
+    ///      permanently. It also keeps {claimedAmount} truthful. One `FHE.min` per finalize CALL, not
+    ///      per slot, so the cost does not scale with batch size. The clamped value is what
+    ///      {WrapFinalized} reports, so the event and the ledger never disagree.
+    function _creditedAmount(euint64 transferred, euint64 owed) private returns (euint64) {
+        return FHE.min(transferred, owed);
     }
 
     function _ensureBatchClosedForFinalize(uint256 batchId, Batch storage batch) internal {

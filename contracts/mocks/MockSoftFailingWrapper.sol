@@ -18,6 +18,9 @@ import {MockERC7984ERC20Wrapper} from "./MockERC7984ERC20Wrapper.sol";
  *        - mode 1: block — move an encrypted zero (freeze / pause / blacklist).
  *        - mode 2: partial — move `min(requested, partialAmount)`, so it never moves more than
  *          asked, exactly like a real soft-failing transfer.
+ *        - mode 3: over-report — move the correct amount but RETURN `moved + partialAmount`. No
+ *          honest wrapper does this; it exists to pin {BatchedStealthWrapAdapter}'s clamp, which
+ *          keeps `claimed <= matched` from depending on the wrapper's return value being truthful.
  */
 contract MockSoftFailingWrapper is MockERC7984ERC20Wrapper {
     uint8 public failMode;
@@ -45,6 +48,18 @@ contract MockSoftFailingWrapper is MockERC7984ERC20Wrapper {
             euint64 capped = FHE.select(within, amount, cap);
             FHE.allowThis(capped);
             return super._update(from, to, capped);
+        }
+        if (failMode == 3) {
+            // Moves honestly, lies about how much. The adapter must not credit the inflated figure.
+            euint64 moved = super._update(from, to, amount);
+            euint64 inflated = FHE.add(moved, FHE.asEuint64(partialAmount));
+            // Mirror the grants `_update` makes on a real result, or the caller cannot use the
+            // handle at all and the lie fails for the wrong reason.
+            FHE.allowThis(inflated);
+            FHE.allow(inflated, msg.sender);
+            if (from != address(0)) FHE.allow(inflated, from);
+            if (to != address(0)) FHE.allow(inflated, to);
+            return inflated;
         }
         return super._update(from, to, amount);
     }
