@@ -15,8 +15,8 @@ const boot = useBatchedSuite();
 
 describe("BatchedStealthWrapAdapter finalizeWrap", () => {
   // An empty id set scanned nothing but still made a real confidentialTransfer of the encrypted
-  // zero, emitting a WrapFinalized an indexer cannot tell from a genuine claim — against any
-  // address, repeatable, consuming no nullifier.
+  // zero, emitting WrapFinalized(recipient, handle, []) against any address that need never have
+  // touched the protocol — repeatable, consuming no nullifier.
   it("rejects an empty id set instead of emitting a forged claim", async () => {
     const { wallets, deployWrapper } = await boot();
     const { alice, bob } = wallets;
