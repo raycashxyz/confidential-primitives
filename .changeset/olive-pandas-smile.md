@@ -18,8 +18,9 @@ that aborted whole `tryTransferFrom` batches.
 
 `isAuthorizedOn(handle, account)` checks a ciphertext an untrusted contract hands back. Anything that
 passes is something the callee could already read, so it cannot launder a third party's handle
-through you. `HandleSet`, with `isFresh` and `markUsed`, tracks single-use input handles. `sum(xs)`
-reduces an array pairwise, keeping FHE dependency depth at `ceil(log2 N)`.
+through you. `isFresh(handle)` reports whether the calling contract has never persisted access to a
+handle, which makes the ACL's own record the used-handle set for single-use inputs, with no mirror
+mapping. `sum(xs)` reduces an array pairwise, keeping FHE dependency depth at `ceil(log2 N)`.
 
 Both shipped contracts route every external ciphertext through `FHEUtils.fromExternal` and call the
 library directly for the returned-handle check and the reduction. `StealthWrapAdapter._sumTree`, the

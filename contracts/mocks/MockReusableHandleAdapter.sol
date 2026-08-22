@@ -3,7 +3,6 @@ pragma solidity ^0.8.27;
 
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {BatchedStealthWrapAdapter} from "../adapters/BatchedStealthWrapAdapter.sol";
-import {FHEUtils} from "../fhe/FHEUtils.sol";
 
 /**
  * @dev Reference override of {StealthWrapAdapter-_consumeRecipientHandle}, and the regression test
@@ -17,16 +16,13 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  *      unlinkability at this shape.
  */
 contract MockReusableHandleAdapter is BatchedStealthWrapAdapter {
-    using FHEUtils for FHEUtils.HandleSet;
-
     constructor(
         uint256 maxBatchDeposits_,
         uint256 sealDelay_,
         IERC7984ERC20Wrapper confidentialWrapper_
     ) BatchedStealthWrapAdapter(maxBatchDeposits_, sealDelay_, confidentialWrapper_) {}
 
-    /// @dev Reuse permitted. The handle is still recorded so `recipientHandleUsed` reports history.
-    function _consumeRecipientHandle(bytes32 handle) internal override {
-        _recipientHandles.markUsed(handle);
-    }
+    /// @dev Reuse permitted. `recipientHandleUsed` still reports history, since it reads the
+    ///      persistent ACL grant the deposit path makes on the stored handle.
+    function _consumeRecipientHandle(bytes32) internal override {}
 }

@@ -12,19 +12,16 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  *      with no compiler error. These are the tests that would catch that.
  */
 contract MockFHEUtilsHarness is ZamaEthereumConfig {
-    using FHEUtils for FHEUtils.HandleSet;
-
     /// @param importer Whether THIS contract can use the imported handle (must be true).
     /// @param submitter Whether the account that submitted it can (must be false).
     event ImportAccess(bool importer, bool submitter);
 
-    /// @param wasFresh Whether the handle was new to the set when {markUsed} ran.
-    event HandleMarked(bool wasFresh);
+    /// @param beforeKeep Whether the handle was fresh right after import, before `allowThis`.
+    /// @param afterKeep Whether it was still fresh once access was persisted.
+    event Freshness(bool beforeKeep, bool afterKeep);
 
     /// @dev Last handle produced by {produce} / {sumOf}, so a test can read it back.
     euint64 public lastResult;
-
-    FHEUtils.HandleSet private _seen;
 
     /// @dev Import an amount and report who ended up with ACL access.
     function importAndReportAccess(externalEuint64 handle, bytes calldata inputProof) external {
@@ -44,6 +41,20 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
         FHEUtils.fromExternal(mistyped, inputProof, msg.sender);
     }
 
+    /// @dev Import a handle and keep it, reporting freshness before and after the persistent grant.
+    function importAndKeep(externalEuint64 handle, bytes calldata inputProof) external {
+        euint64 imported = FHEUtils.fromExternal(handle, inputProof, msg.sender);
+        bytes32 raw = FHE.toBytes32(imported);
+        bool beforeKeep = FHEUtils.isFresh(raw);
+        FHE.allowThis(imported);
+        emit Freshness(beforeKeep, FHEUtils.isFresh(raw));
+    }
+
+    /// @dev Whether this contract has never persisted access to `handle`.
+    function isFresh(bytes32 handle) external view returns (bool) {
+        return FHEUtils.isFresh(handle);
+    }
+
     /// @dev `true` only for a handle this contract holds access to. The {FHEUtils-isAuthorizedOn}
     ///      property, checked against a handle it computed itself and one another contract holds.
     function authorizedHere(euint64 handle) external view returns (bool) {
@@ -55,16 +66,6 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
         euint64 produced = FHE.asEuint64(value);
         FHE.allowThis(produced);
         lastResult = produced;
-    }
-
-    /// @dev Mark `handle` used and report whether it was fresh.
-    function markUsed(bytes32 handle) external {
-        emit HandleMarked(_seen.markUsed(handle));
-    }
-
-    /// @dev Whether `handle` has not been marked used yet.
-    function isFresh(bytes32 handle) external view returns (bool) {
-        return _seen.isFresh(handle);
     }
 
     /// @dev Tree-sum `values` and keep the total, so the reduction is exercised end to end.

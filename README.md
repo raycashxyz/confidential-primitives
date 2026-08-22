@@ -205,10 +205,11 @@ state and grant the result onward, and you have laundered a third party's cipher
 your caller can decrypt. A contract cannot grant itself access to a handle it does not hold, so
 anything that passes is something the callee could already read.
 
-**`HandleSet`**, with `isFresh(set, handle)` and `markUsed(set, handle)`, tracks input handles that
-must be single-use. `markUsed` reports whether the handle was fresh, so a caller enforcing single-use
-reverts on `false` and one permitting reuse ignores it. The stealth adapters keep their recipient
-handles in one.
+**`isFresh(handle)`** answers whether your contract has never persisted access to a handle. A
+contract keeps an input handle by calling `FHE.allowThis` on it, so the ACL's own record already says
+which handles it accepted before, and single-use needs no mirror mapping. Check before `allowThis`.
+Transient grants, including the one `fromExternal` makes, do not count, and since `ACL.allow` requires
+the caller to hold access, only the importing contract can ever mark its own input handle used.
 
 **`sum(xs)`** tree-reduces an array to one ciphertext. fhEVM meters *two* budgets per transaction:
 total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N

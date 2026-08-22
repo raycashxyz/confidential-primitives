@@ -47,13 +47,9 @@ import {FHEUtils} from "../../fhe/FHEUtils.sol";
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
-    using FHEUtils for FHEUtils.HandleSet;
 
     IERC7984ERC20Wrapper public immutable CONFIDENTIAL_WRAPPER;
     euint64 public immutable E_ZERO;
-
-    /// @dev Recipient handles that have already funded a deposit.
-    FHEUtils.HandleSet internal _recipientHandles;
 
     /// @dev Reverts unless the call is inside a `nonReentrant` entrypoint.
     modifier onlyGuarded() {
@@ -88,19 +84,20 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
-    /// @notice Whether an encrypted-recipient handle has already funded a deposit here. Reports
-    ///         history. An adapter that permits reuse still returns `true` for a handle it accepts again.
+    /// @notice Whether an encrypted-recipient handle has already funded a deposit here, read from
+    ///         this adapter's persistent ACL access to it. An adapter that permits reuse still
+    ///         returns `true` for a handle it accepts again.
     function recipientHandleUsed(bytes32 handle) external view returns (bool) {
-        return !_recipientHandles.isFresh(handle);
+        return !FHEUtils.isFresh(handle);
     }
 
     /**
-     * @dev Import a depositor-submitted encrypted recipient and consume its handle. Every deposit
-     *      path must import through here. The import grants this adapter transient access only, so
-     *      the caller persists it with `FHE.allowThis` where it stores the handle, and the
-     *      coprocessor checks the handle's type against `Uint160`, which keeps a `Bool` or `euint64`
-     *      handle out of the `eaddress` slot, where the scalar `FHE.eq` in finalize would not
-     *      catch it.
+     * @dev Import a depositor-submitted encrypted recipient and apply the single-use policy. Every
+     *      deposit path must import through here. The import grants this adapter transient access
+     *      only, so the caller persists it with `FHE.allowThis` where it stores the handle, which is
+     *      also what marks the handle used. The coprocessor checks the handle's type against
+     *      `Uint160`, which keeps a `Bool` or `euint64` handle out of the `eaddress` slot, where the
+     *      scalar `FHE.eq` in finalize would not catch it.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress recipient) {
         recipient = FHEUtils.fromExternal(eRecipient, inputProof, msg.sender);
@@ -111,14 +108,15 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      * @dev Single-use policy for recipient handles. The handle is public in the deposit event so
      *      the recipient can spot their payment, which makes a reused one a tag linking deposits to
      *      the same unknown recipient, while a fresh encryption of the same address is a different
-     *      handle, so a recipient can still be paid any number of times. Override to permit reuse
-     *      only where the deposit path already links the deposits, as a CREATE2 deposit-address
-     *      flow with `salt == handle` does. Such an override should still call
-     *      `_recipientHandles.markUsed(handle)` so {recipientHandleUsed} reports history, and must
-     *      document that its deposits are linkable by recipient.
+     *      handle, so a recipient can still be paid any number of times. The used-handle record is
+     *      the ACL itself. Storing a deposit persists this adapter's access to the handle with
+     *      `FHE.allowThis`, and {FHEUtils-isFresh} reads that back. Override with an empty body to
+     *      permit reuse where the deposit path already links the deposits, as a CREATE2
+     *      deposit-address flow with `salt == handle` does, and document that such deposits are
+     *      linkable by recipient.
      */
     function _consumeRecipientHandle(bytes32 handle) internal virtual {
-        if (!_recipientHandles.markUsed(handle)) revert RecipientHandleAlreadyUsed();
+        if (!FHEUtils.isFresh(handle)) revert RecipientHandleAlreadyUsed();
     }
 
     /**

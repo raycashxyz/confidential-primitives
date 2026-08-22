@@ -4,8 +4,9 @@
 
 Recipient-handle freshness is now an overridable policy rather than a hard-coded rule.
 `StealthWrapAdapter._consumeRecipientHandle(bytes32)` is `virtual` and still single-use by default,
-and the bundled adapters behave as before. An override that permits reuse records the handle in the
-adapter's `FHEUtils.HandleSet` so `recipientHandleUsed` stays truthful.
+and the bundled adapters behave as before. The used-handle record is the adapter's own persistent
+ACL grant on the stored handle, read back through `FHEUtils.isFresh`, so an override that permits
+reuse is an empty body and `recipientHandleUsed` still reports history.
 
 The typed import in `_verifyRecipient`, which also rejects an empty proof, stays outside the hook
 and non-overridable, so a derived adapter can relax freshness without being handed a way to relax the

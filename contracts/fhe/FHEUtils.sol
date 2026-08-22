@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27;
 
 import {FHE, euint64, eaddress, externalEuint64, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
-import {Impl, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
+import {Impl, IACL, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
 import {FheType} from "@fhevm/solidity/lib/FheType.sol";
 
 /**
@@ -10,17 +10,12 @@ import {FheType} from "@fhevm/solidity/lib/FheType.sol";
  * @author Valerio Leo (@valeriohq)
  * @notice Companion to `@fhevm/solidity` for contracts that handle ciphertexts they did not create:
  *         imports that grant access to the importing contract only, a check for handles an untrusted
- *         contract returns, single-use tracking for input handles, and a depth-bounded sum.
+ *         contract returns, a freshness check for single-use input handles, and a depth-bounded sum.
  * @dev {fromExternal} relies on `FHEVMExecutor.verifyInput` granting ACL access to its `msg.sender`
  *      and to nobody else. That holds for fhevm-solidity 0.11.x and is asserted by this library's
  *      tests, which must stay green across dependency bumps.
  */
 library FHEUtils {
-    /// @dev Handles a contract has already accepted, for inputs that must be single-use.
-    struct HandleSet {
-        mapping(bytes32 handle => bool) used;
-    }
-
     /// @dev {fromExternal} was given an empty `inputProof`.
     error MissingInputProof();
 
@@ -90,16 +85,17 @@ library FHEUtils {
     // Single-use handles
     // -----------------------------------------------------------------------
 
-    /// @dev Whether `handle` has never been marked used in `set`.
-    function isFresh(HandleSet storage set, bytes32 handle) internal view returns (bool) {
-        return !set.used[handle];
-    }
-
-    /// @dev Mark `handle` used in `set` and report whether it was fresh. A caller enforcing
-    ///      single-use reverts on `false`. One permitting reuse ignores the result.
-    function markUsed(HandleSet storage set, bytes32 handle) internal returns (bool wasFresh) {
-        wasFresh = !set.used[handle];
-        set.used[handle] = true;
+    /**
+     * @dev Whether the calling contract has never persisted access to `handle`. A contract keeps an
+     *      input handle by calling `FHE.allowThis` on it, so a handle it already holds persistent
+     *      access to is one it already accepted, and the ACL's own record serves as the used-handle
+     *      set. Check before `FHE.allowThis`. Transient grants, including the one {fromExternal}
+     *      makes, do not count, and since `ACL.allow` requires the caller to hold access to the
+     *      handle, the only account that can ever mark an input handle used for a contract is that
+     *      contract, which is the only one its proof lets import it.
+     */
+    function isFresh(bytes32 handle) internal view returns (bool) {
+        return !IACL(Impl.getCoprocessorConfig().ACLAddress).persistAllowed(handle, address(this));
     }
 
     // -----------------------------------------------------------------------
