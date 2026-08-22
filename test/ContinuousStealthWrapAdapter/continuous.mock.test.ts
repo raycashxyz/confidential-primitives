@@ -94,7 +94,7 @@ describe("ContinuousStealthWrapAdapter", () => {
   };
 
   // minDecoys is a FLOOR every finalize must clear, so one set above the executable scan size
-  // leaves deposits that succeed and can never be finalized — and it is immutable.
+  // leaves deposits that succeed and can never be finalized, and it is immutable.
   it("rejects a decoy floor no finalize could ever satisfy", async () => {
     await assertRevertsWith(deployWrapper(0n), "InvalidMinDecoys");
     await assertRevertsWith(deployWrapper(41n), "InvalidMinDecoys");
@@ -104,7 +104,7 @@ describe("ContinuousStealthWrapAdapter", () => {
 
   // Without a proof, FHE.fromExternal returns the handle verbatim and skips the Uint160 check, so
   // a wrong-type handle would land in `recipient` and make every finalize naming that slot revert
-  // IncompatibleTypes inside the executor — bricking the deposit permanently.
+  // IncompatibleTypes inside the executor, bricking the deposit permanently.
   it("rejects an empty inputProof on initWrap", async () => {
     const { alice } = H.wallets;
     const { contract: wrapper } = await deployWrapper();
@@ -214,7 +214,7 @@ describe("ContinuousStealthWrapAdapter", () => {
     expect(await decryptBalance(bob)).toBe(0n);
 
     // Bob's decoy deposit was preserved: he can still claim it in a later finalize over the same
-    // ids — and the already-matched id 0 (now zeroed) contributes nothing to him (no double-spend).
+    // ids, and the already-matched id 0 (now zeroed) contributes nothing to him (no double-spend).
     await sendOk(wrapper.write.finalizeWrap([[0n, 1n], bob.account.address], fheTxOpts(bob.account)));
     expect(await decryptBalance(bob)).toBe(AMOUNT);
     expect(await decryptBalance(alice)).toBe(AMOUNT); // unchanged

@@ -204,7 +204,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     const h = (v: number) => v.toLocaleString().padStart(13);
     const capped = (v: number, cap: number) => (v >= cap ? `${v.toLocaleString()} X` : v.toLocaleString()).padStart(15);
 
-    console.log("\n  MEASURED EVM gas — finalize all N deposits to one recipient");
+    console.log("\n  MEASURED EVM gas: finalize all N deposits to one recipient");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -213,7 +213,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
-    console.log("\n  ANALYTIC total HCU (cap 20,000,000/tx) — finalize only, HCULimit op costs");
+    console.log("\n  ANALYTIC total HCU (cap 20,000,000/tx): finalize only, HCULimit op costs");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -222,7 +222,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
-    console.log("\n  ANALYTIC HCU DEPTH (cap 5,000,000/tx; X = over cap) — finalize critical path");
+    console.log("\n  ANALYTIC HCU DEPTH (cap 5,000,000/tx; X = over cap): finalize critical path");
     console.log("  ┌────────┬─────────────────┬─────────────────┐");
     console.log("  │ N      │ continuous      │ batched         │");
     console.log("  ├────────┼─────────────────┼─────────────────┤");

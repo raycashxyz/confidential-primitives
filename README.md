@@ -10,18 +10,18 @@ Building Raycash, we kept rewriting the same low-level plumbing for that step. `
 
 Two primitives so far, and more will follow:
 
-- **[Stealth wrap adapters](#the-stealth-wrap-adapters)** — get funds *into* the confidential world without linking the deposit to its recipient.
-- **[`RecurringAllowance`](#recurringallowance)** — let a spender pull funds on a budget ("100 USDC/day") without publishing the budget.
+- **[Stealth wrap adapters](#the-stealth-wrap-adapters)**: get funds *into* the confidential world without linking the deposit to its recipient.
+- **[`RecurringAllowance`](#recurringallowance)**: let a spender pull funds on a budget ("100 USDC/day") without publishing the budget.
 
 ## Compatibility
 
-These are **Zama FHEVM** contracts, not implementation-agnostic ERC-7984 ones. ERC-7984 represents confidential amounts as opaque `bytes32` pointers and deliberately leaves how they're resolved and manipulated to the implementation — it's designed to admit FHE, zero-knowledge systems, secure enclaves and more. Nothing here can work across that range, and ERC-7984 compliance alone is not enough to integrate. Concretely, both primitives require:
+These are **Zama FHEVM** contracts, not implementation-agnostic ERC-7984 ones. ERC-7984 represents confidential amounts as opaque `bytes32` pointers and deliberately leaves how they're resolved and manipulated to the implementation; it's designed to admit FHE, zero-knowledge systems, secure enclaves and more. Nothing here can work across that range, and ERC-7984 compliance alone is not enough to integrate. Concretely, both primitives require:
 
 - Zama's `euint64` / `eaddress` handle types and the FHEVM ACL, via `@fhevm/solidity` (`select`, `add`, `allow`, the coprocessor's `verifyInput`, …). A pointer that isn't a Zama handle won't resolve.
 - Handles returned by the token or wrapper to be valid operands in the *same* FHEVM deployment this contract is configured for.
 - Input proofs produced by the coprocessor and bound to `(contract, submitter)`.
 
-The stealth wrap adapters additionally require OpenZeppelin's wrapper shape — `underlying()` and `rate()`, which are `ERC7984ERC20Wrapper` extensions rather than ERC-7984 itself — and a wrapper that is [exact-or-revert](#how-it-works). `RecurringAllowance` requires an ERC-7984 token with working `setOperator` / `confidentialTransferFrom` semantics on this FHEVM.
+The stealth wrap adapters additionally require OpenZeppelin's wrapper shape (`underlying()` and `rate()`, which are `ERC7984ERC20Wrapper` extensions rather than ERC-7984 itself) and a wrapper that is [exact-or-revert](#how-it-works) where the adapter needs it. `RecurringAllowance` requires an ERC-7984 token with working `setOperator` / `confidentialTransferFrom` semantics on this FHEVM.
 
 ## The stealth wrap adapters
 
@@ -71,7 +71,7 @@ Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implemen
 
 `ContinuousStealthWrapAdapter` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedStealthWrapAdapter` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
 
-Two things about `minDecoys` that its name doesn't convey. It's a **count of ids, not a measure of privacy** — a spent deposit's amount is zeroed but its slot stays a legal id forever, and is publicly indistinguishable from a live one, so an early sybil can seed the pool, drain their own deposits, and leave you picking decoys they own and can therefore rule out. And it creates a **cold start**: finalization needs `minDecoys` deposits to exist, while `initWrap` has no matching floor, so the first few depositors in a quiet pool must wait for organic growth. They can unblock it by funding the missing deposits themselves, but `WrapInitiated` publishes depositor and amount, so that means a visible run of self-attributable deposits — the privacy they came for. Seed the pool at deployment if you can.
+Two things about `minDecoys` that its name doesn't convey. It's a **count of ids, not a measure of privacy**: a spent deposit's amount is zeroed but its slot stays a legal id forever, and is publicly indistinguishable from a live one, so an early sybil can seed the pool, drain their own deposits, and leave you picking decoys they own and can therefore rule out. And it creates a **cold start**: finalization needs `minDecoys` deposits to exist, while `initWrap` has no matching floor, so the first few depositors in a quiet pool must wait for organic growth. They can unblock it by funding the missing deposits themselves, but `WrapInitiated` publishes depositor and amount, so that means a visible run of self-attributable deposits, which costs the privacy they came for. Seed the pool at deployment if you can.
 
 Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm-mocks`, comparing `finalizeWrap` (`N` is the anonymity-set size: selected ids for continuous, batch size for batched):
 
@@ -87,18 +87,18 @@ Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm
 
 Batched is cheaper at every size. The gap is that continuous does more encrypted work per deposit: it rewrites each scanned deposit's amount in storage, where batched leaves the slot alone and keeps one encrypted `claimed` total per `(batch, recipient)`. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
 
-**Size these against your wrapper, not against this table.** The numbers above are measured against a bare mock wrapper, and `MAX_BATCH_LIMIT` / `MAX_MIN_DECOYS` bound the *adapter's* own FHE work. `finalizeWrap` also calls the wrapper, and whatever its `_update` costs comes out of the same per-transaction budget — an `ERC7984Hooked` wrapper with a few modules can add millions of HCU and push a full 48-slot scan over the limit. That cost isn't even fixed at deploy time: a hooked wrapper's admin can `installModule` *after* deposits are escrowed, and neither `maxBatchDeposits` nor `minDecoys` can be lowered in response. Deposits keep succeeding, and because finalize recomputes a recipient's `matched` sum over the whole batch you can't scan it in parts to get under budget. Calibrate against the target wrapper's post-module transfer cost, leave real headroom, and prefer a wrapper whose FHE cost can't change under you.
+**Size these against your wrapper, not against this table.** The numbers above are measured against a bare mock wrapper, and `MAX_BATCH_LIMIT` / `MAX_MIN_DECOYS` bound the *adapter's* own FHE work. `finalizeWrap` also calls the wrapper, and whatever its `_update` costs comes out of the same per-transaction budget: an `ERC7984Hooked` wrapper with a few modules can add millions of HCU and push a full 48-slot scan over the limit. That cost isn't even fixed at deploy time: a hooked wrapper's admin can `installModule` *after* deposits are escrowed, and neither `maxBatchDeposits` nor `minDecoys` can be lowered in response. Deposits keep succeeding, and because finalize recomputes a recipient's `matched` sum over the whole batch you can't scan it in parts to get under budget. Calibrate against the target wrapper's post-module transfer cost, leave real headroom, and prefer a wrapper whose FHE cost can't change under you.
 
 ### Privacy model
 
 Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this set of deposits (or this batch)." It does **not** reveal which of those deposits were `R`'s: each deposit's encrypted recipient is compared to `R` homomorphically (`FHE.eq`, under encryption) and selected obliviously, so the chain never learns the per-deposit match. It doesn't even reveal whether *any* deposit matched: the payout is an encrypted sum that can be zero. So `R`'s address is public at finalize, but it stays unlinkable to any individual deposit.
 
-**Against a passive observer.** The set hides a deposit only among the slots an adversary cannot rule out, and a *co-depositor* can rule out their own. Someone who put deposits into the same batch knows those encrypted recipients aren't `R`, so they subtract them; whatever is left is the real anonymity set. Own enough of a batch and it collapses to a single slot. That is inherent to any fixed-size anonymity set an adversary can pay to fill — Tornado-style pools face the same thing — and it bites harder here because `maxBatchDeposits` is capped at 48, so filling one is cheap.
+**Against a passive observer.** The set hides a deposit only among the slots an adversary cannot rule out, and a *co-depositor* can rule out their own. Someone who put deposits into the same batch knows those encrypted recipients aren't `R`, so they subtract them; whatever is left is the real anonymity set. Own enough of a batch and it collapses to a single slot. That is inherent to any fixed-size anonymity set an adversary can pay to fill. Tornado-style pools face the same thing, and it bites harder here because `maxBatchDeposits` is capped at 48, so filling one is cheap.
 
 There's no contract-side fix, but there is a practical client-side one, and it works *because* the deposit side is transparent: depositor and amount are cleartext in `WrapInitiated`, so **you can see who is already in a batch before you join it**. A batch dominated by freshly funded addresses that all appeared moments ago is visible for what it is. Two things follow for wallets:
 
 - Use `initWrapInto(expectedBatchId, …)` rather than `initWrap`, so you land in the batch you actually inspected or revert without moving funds. Plain `initWrap` can be front-run into a fresh, empty batch that the attacker then fills around you.
-- Judge the crowd before depositing — distinct depositors, funding history, age. `initWrapInto` prevents displacement; it does not stop anyone from co-depositing into the batch you pinned.
+- Judge the crowd before depositing: distinct depositors, funding history, age. `initWrapInto` prevents displacement; it does not stop anyone from co-depositing into the batch you pinned.
 
 | Signal | Visibility |
 | --- | --- |
@@ -109,58 +109,58 @@ There's no contract-side fix, but there is a practical client-side one, and it w
 | Which deposits matched | Hidden (oblivious `FHE.select`) |
 | Amount delivered | Encrypted `euint64`; can be zero |
 
-**The recipient is hidden from the chain and from the depositor.** The handshake has the recipient encrypt their own address with the input proof bound to the *depositor*, which is what stops anyone else submitting it. The obvious way to import that ciphertext, `FHE.fromExternal`, would also hand the depositor transient ACL access to it — harmless for an EOA (transient authorization dies with the transaction) but not for a *contract* depositor, which could make that access permanent or mark the value publicly decryptable in the same call and read the address off. So the adapters import through `FHEUtils.fromExternal` (see [FHEUtils](#fheutils)), which calls the coprocessor's `verifyInput` with the same proof check and the same depositor binding but grants ACL access only to the adapter. The proof still names the depositor — so no one else can submit it — while the depositor itself gets nothing to escalate. The recipient is concealed from a contract payer as well as from observers. (This hides the recipient from the payer; it does *not* let the payer verify it — the party doing the encrypting is the party being trusted, so treat a payment request as an authenticated message from the payee and confirm it out of band.)
+**The recipient is hidden from the chain and from the depositor.** The handshake has the recipient encrypt their own address with the input proof bound to the *depositor*, which is what stops anyone else submitting it. The obvious way to import that ciphertext, `FHE.fromExternal`, would also hand the depositor transient ACL access to it: harmless for an EOA (transient authorization dies with the transaction) but not for a *contract* depositor, which could make that access permanent or mark the value publicly decryptable in the same call and read the address off. So the adapters import through `FHEUtils.fromExternal` (see [FHEUtils](#fheutils)), which calls the coprocessor's `verifyInput` with the same proof check and the same depositor binding but grants ACL access only to the adapter. The proof still names the depositor, so no one else can submit it, while the depositor itself gets nothing to escalate. The recipient is concealed from a contract payer as well as from observers. (This hides the recipient from the payer; it does *not* let the payer verify it: the party doing the encrypting is the party being trusted, so treat a payment request as an authenticated message from the payee and confirm it out of band.)
 
-**Don't exit the exact amount you were paid.** The payout stays encrypted on-chain, but the recipient can spend that ciphertext — and if they *unwrap it publicly*, the clear value becomes known. Deposit amounts are already public and rounded to the wrapper's `rate()`, so once the exit value is known anyone can search the scanned set for a subset that sums to it. When exactly one subset matches — likely for small sets and distinctive amounts — that subset *is* the recipient's deposits, and the unlinkability the mix bought is gone.
+**Don't exit the exact amount you were paid.** The payout stays encrypted on-chain, but the recipient can spend that ciphertext, and if they *unwrap it publicly*, the clear value becomes known. Deposit amounts are already public and rounded to the wrapper's `rate()`, so once the exit value is known anyone can search the scanned set for a subset that sums to it. When exactly one subset matches (likely for small sets and distinctive amounts), that subset *is* the recipient's deposits, and the unlinkability the mix bought is gone.
 
-Nothing on-chain can prevent this: it happens after delivery, with the recipient's own key. Avoid an exact exit — unwrap a different amount than you received, split withdrawals over time, or mix the balance with funds from elsewhere before exiting.
+Nothing on-chain can prevent this: it happens after delivery, with the recipient's own key. Avoid an exact exit: unwrap a different amount than you received, split withdrawals over time, or mix the balance with funds from elsewhere before exiting.
 
 ## RecurringAllowance
 
-The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits — without publishing the limits.
+The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits, without publishing the limits.
 
-ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing: an operator can move **any** amount of your balance while approved. There is no `approve(spender, 100)` in confidential-token land — a cleartext allowance sitting next to an encrypted balance would leak the very numbers the balance math hides. `RecurringAllowance` fills that gap: you make the contract your operator once, then grant per-spender budgets here — "100 USDC per day", with the 100 encrypted. A spender can only move your funds through `transferFrom`, which enforces every budget homomorphically. Think Permit2's allowance module or a card's spending limit, for confidential tokens.
+ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing: an operator can move **any** amount of your balance while approved. There is no `approve(spender, 100)` in confidential-token land: a cleartext allowance sitting next to an encrypted balance would leak the very numbers the balance math hides. `RecurringAllowance` fills that gap: you make the contract your operator once, then grant per-spender budgets here ("100 USDC per day", with the 100 encrypted). A spender can only move your funds through `transferFrom`, which enforces every budget homomorphically. Think Permit2's allowance module or a card's spending limit, for confidential tokens.
 
-- **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry — or **`permitSetPermission`** does the same from an off-chain signature, so granting costs the user zero gas (see [Signature permits](#signature-permits-gasless-grants-and-confidential-cheques)).
-- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero — a denied spend is indistinguishable on-chain from a permitted one. **`tryTransferFrom`** is the payment-processor variant: items that fail a *cleartext* precondition (revoked grant, expired operator) are skipped with a `TransferSkipped` event instead of reverting the batch. One failure is escalated rather than skipped: a token that returns a ciphertext handle it is not itself authorized on reverts the whole call with `InvalidReturnedHandle`, because no conforming ERC-7984 can produce one and it is evidence the token is hostile. Screen tokens before batching them.
-- **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call. **`getGrantedPairs`** enumerates every (token, spender) a user has granted, on-chain — a wallet can render (and revoke) the "who can spend my money" screen without an indexer.
+- **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry. **`permitSetPermission`** does the same from an off-chain signature, so granting costs the user zero gas (see [Signature permits](#signature-permits-gasless-grants-and-confidential-cheques)).
+- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero; a denied spend is indistinguishable on-chain from a permitted one. **`tryTransferFrom`** is the payment-processor variant: items that fail a *cleartext* precondition (revoked grant, expired operator) are skipped with a `TransferSkipped` event instead of reverting the batch. One failure is escalated rather than skipped: a token that returns a ciphertext handle it is not itself authorized on reverts the whole call with `InvalidReturnedHandle`, because no conforming ERC-7984 can produce one and it is evidence the token is hostile. Screen tokens before batching them.
+- **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call. **`getGrantedPairs`** enumerates every (token, spender) a user has granted, on-chain, so a wallet can render (and revoke) the "who can spend my money" screen without an indexer.
 
 ### How it works
 
 1. The user calls `setOperator(recurringAllowance, until)` on the ERC-7984 token (once; keep `until` beyond your permission windows).
 2. The user calls `setPermission(token, spender, encryptedLimit, proof, duration, startTime, endTime)`.
-3. The spender calls `transferFrom(from, to, encryptedAmount, proof, token)` — or the batch overload for many pulls in one transaction.
+3. The spender calls `transferFrom(from, to, encryptedAmount, proof, token)`, or the batch overload for many pulls in one transaction.
 4. The contract checks every active permission homomorphically, moves the encrypted amount (or zero) via `confidentialTransferFrom`, and credits `spent` with what the token reports actually moved.
 
 ### Semantics that matter
 
-- **Budgets stack conjunctively.** Every active permission for a (user, token, spender) key must pass (AND logic), so "100/day AND 500/week" is just two `setPermission` calls. The corollary: adding a permission only ever *tightens* the allowance — to raise a limit, update the existing permission instead of adding one.
-- **Periods are fixed windows**, anchored at `startTime` (period `n` is `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding window. `spent` resets lazily at the first spend attempt in a new period. A spender straddling a boundary can move up to 2x the limit inside one `duration`-long span — inherent to fixed windows; size limits with that in mind.
+- **Budgets stack conjunctively.** Every active permission for a (user, token, spender) key must pass (AND logic), so "100/day AND 500/week" is just two `setPermission` calls. The corollary: adding a permission only ever *tightens* the allowance; to raise a limit, update the existing permission instead of adding one.
+- **Periods are fixed windows**, anchored at `startTime` (period `n` is `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding window. `spent` resets lazily at the first spend attempt in a new period. A spender straddling a boundary can move up to 2x the limit inside one `duration`-long span; that is inherent to fixed windows, so size limits with that in mind.
 - **Allowance tracks value moved, not attempts.** `spent` is credited with the amount the token reports as actually transferred, so a pull against an insufficient balance consumes nothing and can be retried after a top-up.
-- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`) — which is public information anyway.
-- **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall — and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
+- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`), which is public information anyway.
+- **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall, and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
 
 ### Signature permits (gasless grants and confidential cheques)
 
-Permit2 taught EVM users to authorize token movements with signatures instead of transactions. The confidential version has one twist: the amount is a ciphertext, so **the permit signs the ciphertext handle**. The owner encrypts the amount off-chain with the input proof bound to `(this contract, spender)` — meaning only that spender can ever submit it — and signs EIP-712 over the struct including the handle. Substituting any other ciphertext breaks the signature; submitting as anyone else breaks the proof.
+Permit2 taught EVM users to authorize token movements with signatures instead of transactions. The confidential version has one twist: the amount is a ciphertext, so **the permit signs the ciphertext handle**. The owner encrypts the amount off-chain with the input proof bound to `(this contract, spender)`, meaning only that spender can ever submit it, and signs EIP-712 over the struct including the handle. Substituting any other ciphertext breaks the signature; submitting as anyone else breaks the proof.
 
 Two flows:
 
-- **`permitSetPermission`** — gasless grants. The owner signs a `PermitGrant`; the spender submits it and pays the gas; the result is a completely normal permission. Granting a subscription budget costs the user zero transactions.
-- **`permitTransferFrom`** — one-shot transfers up to a signed encrypted cap, optionally bound to a recipient: a *confidential cheque*. The spender chooses the actual amount at execution; over-cap requests move an encrypted zero, obliviously.
+- **`permitSetPermission`**: gasless grants. The owner signs a `PermitGrant`; the spender submits it and pays the gas; the result is a completely normal permission. Granting a subscription budget costs the user zero transactions.
+- **`permitTransferFrom`**: one-shot transfers up to a signed encrypted cap, optionally bound to a recipient: a *confidential cheque*. The spender chooses the actual amount at execution; over-cap requests move an encrypted zero, obliviously.
 
 Nonces are Permit2-style unordered bitmaps: any number of permits can be outstanding. To cancel signatures you haven't submitted yet, `invalidateUnorderedNonces` burns specific nonces, and `invalidateAllPermits` bumps a per-owner epoch that invalidates **every** outstanding permit at once (the signature-level counterpart to `lockdown`, which only revokes *stored* permissions). Signatures verify via ECDSA or ERC-1271, and the owner address is bound into the signed digest so a signature authorizing one smart account can't be replayed against a sibling account that shares its signer.
 
 Two caveats to design around:
 
-- **A submitted cheque burns its nonce regardless of the encrypted outcome.** The outcome cannot be read in cleartext, so a cheque drawn against an insufficient balance is consumed unspent — like a bounced paper cheque, the owner re-issues. (Gasless *grants* don't have this problem: a grant against an empty wallet just sits there until funded.)
+- **A submitted cheque burns its nonce regardless of the encrypted outcome.** The outcome cannot be read in cleartext, so a cheque drawn against an insufficient balance is consumed unspent, like a bounced paper cheque; the owner re-issues. (Gasless *grants* don't have this problem: a grant against an empty wallet just sits there until funded.)
 - **How long an input proof stays submittable after signing is an operational property of the FHEVM gateway**, not of this contract. Size `sigDeadline` accordingly; for grants the natural pattern (spender submits immediately on receiving the signature) makes the window a non-issue.
 
-The user who signs sees only a `bytes32` handle — **only the client that encrypted the amount can show them the number they're committing to**, so the signing UI and the encryption client must be the same trusted surface.
+The user who signs sees only a `bytes32` handle; **only the client that encrypted the amount can show them the number they're committing to**, so the signing UI and the encryption client must be the same trusted surface.
 
 ### Cost
 
-Every active permission on a key adds a fixed amount of encrypted work to each `transferFrom` (two `le`, one `sub`, one `and`, one `add`), which is why permissions are capped at `MAX_PERMISSIONS = 8` per (user, token, spender) — comfortably inside the FHEVM HCU budget with room to spare, and far above the realistic 2–4 tiers. Measured with `pnpm test:bench` on `fhevm-tevm-mocks` (`N` is the number of active permissions; ±1% run-to-run mock variance):
+Every active permission on a key adds a fixed amount of encrypted work to each `transferFrom` (two `le`, one `sub`, one `and`, one `add`), which is why permissions are capped at `MAX_PERMISSIONS = 8` per (user, token, spender): comfortably inside the FHEVM HCU budget, and far above the realistic 2-4 tiers. Measured with `pnpm test:bench` on `fhevm-tevm-mocks` (`N` is the number of active permissions; ±1% run-to-run mock variance):
 
 | Active permissions `N` | `transferFrom` gas |
 | ---: | ---: |
@@ -169,7 +169,7 @@ Every active permission on a key adds a fixed amount of encrypted work to each `
 | 4 | 877,793 |
 | 8 | 1,246,686 |
 
-A denied spend costs exactly the same as a permitted one — same op sequence, so gas is not a side channel on the outcome. The benchmark asserts this.
+A denied spend costs the same as a permitted one (same op sequence), so gas is not a side channel on the outcome. The benchmark asserts this.
 
 ### Privacy model
 
@@ -177,20 +177,20 @@ A denied spend costs exactly the same as a permitted one — same op sequence, s
 | --- | --- |
 | That a permission exists (user, token, spender) | Public |
 | Period shape (duration, start, expiry) | Public |
-| Limit and spent amounts | Encrypted; decryptable by the user **and the spender** — the spender needs to see its own budget, and an active spender could infer it by probing anyway |
+| Limit and spent amounts | Encrypted; decryptable by the user **and the spender** (the spender needs to see its own budget, and an active spender could infer it by probing anyway) |
 | Spend attempts (spender, from, to, when) | Public (the transaction, plus the token's own `ConfidentialTransfer` event) |
 | Spend amounts | Encrypted `euint64` |
 | Whether a spend was permitted or denied | Hidden on-chain: identical writes and events either way; the recipient learns the outcome from their balance |
 
 ## FHEUtils
 
-`contracts/fhe/FHEUtils.sol` is an **addition** to `@fhevm/solidity`, not a replacement — import both.
+`contracts/fhe/FHEUtils.sol` extends `@fhevm/solidity`; import both.
 It holds the pieces every contract that handles ciphertexts it did not create ends up needing, and
 that are easy to get silently wrong.
 
-**`fromExternal(handle, inputProof, user)`** — import a caller-supplied ciphertext, granting ACL
+**`fromExternal(handle, inputProof, user)`**: import a caller-supplied ciphertext, granting ACL
 access to *your contract only*. `FHE.fromExternal` also grants the **submitter** transient access. An
-EOA can't use that, but a contract caller — still running in the same transaction — promotes it with
+EOA can't use that, but a contract caller, still running in the same transaction, promotes it with
 `FHE.allow` or publishes it with `FHE.makePubliclyDecryptable`, then decrypts a plaintext it was never
 meant to see. Passing the expected type to the coprocessor additionally closes `fromExternal`'s
 empty-proof branch, which returns a handle verbatim after only an ACL check and lets a caller land a
@@ -198,20 +198,20 @@ wrong-typed handle in a typed slot. The proof binding is unchanged: `user` is st
 ciphertext stays submittable only by the party it was issued to. Pass `msg.sender` unless you know
 why you shouldn't.
 
-**`isAuthoredBy(handle, author)`** — the check to run on any ciphertext an untrusted contract hands
+**`isAuthoredBy(handle, author)`**: the check to run on any ciphertext an untrusted contract hands
 *back* to you. Handles are global rather than namespaced, so a hostile callee can return a handle
-belonging to someone else — one it read from a public getter. Fold that into your own state and grant
+belonging to someone else (one it read from a public getter). Fold that into your own state and grant
 the result onward, and you have laundered a third party's ciphertext into something your caller can
 decrypt. A contract is always authorized on a value it really computed and cannot grant itself access
 to one it didn't, which is what separates the two.
 
-**`sum(xs)`** — tree-reduce an array to one ciphertext. fhEVM meters *two* budgets per transaction:
+**`sum(xs)`**: tree-reduce an array to one ciphertext. fhEVM meters *two* budgets per transaction:
 total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N
 adds, so it hits the depth cap long before the total one and caps N hard. Pairwise reduction keeps the
 critical path at `ceil(log2 N)`.
 
-> **Version coupling.** `fromExternal` depends on the *behaviour* of `FHEVMExecutor.verifyInput` —
-> that it grants ACL access to its own `msg.sender` and no one else — not just its signature. A
+> **Version coupling.** `fromExternal` depends on the *behaviour* of `FHEVMExecutor.verifyInput`
+> (that it grants ACL access to its own `msg.sender` and no one else), rather than only its signature. A
 > release changing that would break the guarantee with no compiler error, so `test/fhe-utils.mock.test.ts`
 > asserts it directly. Keep those green across dependency bumps rather than trusting a version pin.
 

@@ -1,7 +1,7 @@
 /**
  * Minimal FHEVM encrypt/decrypt helpers over a fhevm-tevm-mocks instance.
  *
- * Standalone replacement for the encrypt/decrypt utilities used by the private harness — no
+ * Standalone replacement for the encrypt/decrypt utilities used by the private harness: no
  * relayer-SDK production path, just the test-instance calls the adapters need.
  */
 import {
@@ -54,7 +54,7 @@ const toHandle = (h: string | Uint8Array): Hex =>
 const toProof = (p: string | Uint8Array): Hex => (typeof p === "string" && isHex(p) ? p : toHex(p));
 
 /**
- * Encrypt `values` for `contractAddress`/`userAddress`, returning `[...handles, inputProof]` —
+ * Encrypt `values` for `contractAddress`/`userAddress`, returning `[...handles, inputProof]`,
  * the shape the wrapper entry points expect.
  */
 export async function encryptValues (

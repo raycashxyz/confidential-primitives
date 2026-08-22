@@ -85,7 +85,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
   });
 
   // Batch cost is the sum over items and one payer's tiers move the ceiling for everyone else, so
-  // processors need the count a spend would actually evaluate — not the stored count.
+  // processors need the count a spend would actually evaluate, not the stored count.
   it("counts only the permissions a spend would evaluate", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob } = H.wallets;

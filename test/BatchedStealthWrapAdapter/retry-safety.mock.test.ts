@@ -1,5 +1,5 @@
 /**
- * BatchedStealthWrapAdapter — finalize is retry-safe against a soft-failing wrapper (issue #34).
+ * BatchedStealthWrapAdapter: finalize is retry-safe against a soft-failing wrapper (issue #34).
  *
  * The batched adapter replaced its cleartext (batch, recipient) nullifier with an encrypted
  * `claimed` accumulator: finalize pays `matched - claimed` and credits back only what the wrapper
@@ -181,7 +181,7 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
   // NOTE this does not isolate the `FHE.min` clamp in `_creditedAmount`: without it `claimed` would
   // exceed `matched` and the next `matched - claimed` would wrap near 2^64, but OZ soft-fails that
   // oversized transfer to zero (escrow is nowhere near 2^64), so the balances below look the same
-  // either way. The clamp is there to keep `claimed <= matched` structurally true — which is what
+  // either way. The clamp is there to keep `claimed <= matched` structurally true, which is what
   // `claimedAmount` reports and what an exact-or-revert wrapper would otherwise revert on forever.
   // What this test does pin is the user-visible guarantee: a lying wrapper cannot extract more than
   // the matched sum, and the batch stays usable afterwards.

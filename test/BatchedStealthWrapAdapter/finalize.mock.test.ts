@@ -1,5 +1,5 @@
 /**
- * BatchedStealthWrapAdapter — finalizeWrap correctness (gating, no-double-spend via the encrypted
+ * BatchedStealthWrapAdapter: finalizeWrap correctness (gating, no-double-spend via the encrypted
  * claimed accumulator, per-recipient scan). Retry-safety against a soft-failing wrapper lives in the
  * sibling *.retry-safety file; multi-batch + scale cases in *.finalize-scale.
  */
@@ -16,7 +16,7 @@ const boot = useBatchedSuite();
 describe("BatchedStealthWrapAdapter finalizeWrap", () => {
   // An empty id set scanned nothing but still made a real confidentialTransfer of the encrypted
   // zero, emitting WrapFinalized(recipient, handle, []) against any address that need never have
-  // touched the protocol — repeatable, consuming no nullifier.
+  // touched the protocol, and repeatable at gas cost.
   it("rejects an empty id set instead of emitting a forged claim", async () => {
     const { wallets, deployWrapper } = await boot();
     const { alice, bob } = wallets;
@@ -35,7 +35,7 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     const { alice } = wallets;
     const { contract: wrapper } = await deployWrapper(4n);
     await fundAndApprove(wrapper, alice, 1n);
-    await initWrap(wrapper, alice, alice.account.address); // 1/4 — open
+    await initWrap(wrapper, alice, alice.account.address); // 1/4, open
 
     await assertRevertsWith(
       wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),

@@ -30,7 +30,7 @@ export async function assertRevertsWith (promise: Promise<unknown>, errorName: s
 /**
  * The ACL rejects an unauthorized `allow` / `makePubliclyDecryptable` with `SenderNotAllowed(address)`.
  * That error lives in a host contract, not in ours, so viem cannot name it and surfaces the raw
- * 4-byte selector — match on the selector instead.
+ * 4-byte selector; match on the selector instead.
  */
 export const SENDER_NOT_ALLOWED = toFunctionSelector("SenderNotAllowed(address)").toLowerCase();
 

@@ -1,5 +1,5 @@
 /**
- * BatchedStealthWrapAdapter — sealBatch liveness: a tail batch that never fills can be sealed
+ * BatchedStealthWrapAdapter sealBatch liveness: a tail batch that never fills can be sealed
  * after the delay so it can still finalize.
  */
 import {
@@ -30,7 +30,7 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
   });
 
   // With the timer anchored to the LAST deposit, anyone could push the deadline out one dust
-  // deposit at a time for every free slot — up to ~(maxBatchDeposits - fillCount) * sealDelay, and
+  // deposit at a time for every free slot, up to ~(maxBatchDeposits - fillCount) * sealDelay, and
   // since finalizeWrap names its recipient in cleartext calldata, aimed at a specific pending
   // finalization. Anchoring to the first deposit gives the batch a lifetime nobody can extend.
   it("does not let later deposits push out the seal deadline", async () => {
@@ -101,7 +101,7 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     const { contract: wrapper } = await deployWrapper(4n);
     await fundAndApprove(wrapper, alice, 2n);
 
-    // Only 2 of 4 slots ever fill — without sealing, the batch could never finalize.
+    // Only 2 of 4 slots ever fill; without sealing, the batch could never finalize.
     await initWrap(wrapper, alice, alice.account.address);
     await initWrap(wrapper, alice, alice.account.address);
     expect(await wrapper.read.batchClosed([0n])).toBe(false);

@@ -1,5 +1,5 @@
 /**
- * BatchedStealthWrapAdapter — constructor + initWrap.
+ * BatchedStealthWrapAdapter: constructor + initWrap.
  * (finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
  * so vitest can run them on separate workers; all share the harness in setup/suite.)
  */
@@ -47,9 +47,8 @@ describe("BatchedStealthWrapAdapter", () => {
   });
 
   describe("initWrap", () => {
-    // FHE.fromExternal's empty-proof branch returns the handle verbatim with no type check, which
-    // would let a Bool or euint64 handle sit in the eaddress recipient field. Requiring a real
-    // proof forces the coprocessor's Uint160 check.
+    // Every legitimate deposit carries a proof, so an empty one is rejected up front with the
+    // adapter's own error rather than reaching the coprocessor.
     it("rejects an empty inputProof (the handle would skip the coprocessor's type check)", async () => {
       const {
         wallets, fhevm, deployWrapper, fundAndApprove
@@ -97,9 +96,9 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
     });
 
-    // Single-use is the default policy, not an invariant: a deposit-address flow keyed on the handle
-    // (salt == handle) cannot rotate it, and its deposits are already clustered by the payer's clear
-    // transfer to that public address. Reuse must stay claimable — both deposits pay out to R.
+    // Single-use is the default and a subclass may permit reuse: a deposit-address flow keyed on the
+    // handle (salt == handle) cannot rotate it, and its deposits are already clustered by the payer's
+    // clear transfer to that public address. Reuse must stay claimable: both deposits pay out to R.
     it("lets a subclass permit handle reuse without breaking the payout", async () => {
       const {
         publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send, decryptBalance
@@ -120,7 +119,7 @@ describe("BatchedStealthWrapAdapter", () => {
       );
 
       await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
-      // The handle is recorded as seen — the view reports history, not policy...
+      // The handle is recorded as seen (the view reports history, not policy)...
       expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
       // ...so the same handle is accepted again where the base adapter reverts.
       await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
@@ -131,8 +130,8 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
     });
 
-    // The empty-proof gate is deliberately outside the overridable freshness hook: it is the type
-    // check that closes the Bool/euint64 recipient attacks, so relaxing reuse must not relax it.
+    // The empty-proof gate and the typed import sit outside the overridable freshness hook, so a
+    // subclass that relaxes reuse cannot relax the type check that closes the Bool/euint64 attacks.
     it("keeps the empty-proof gate on a subclass that permits handle reuse", async () => {
       const {
         publicClient, wallets, store, confidentialWrapper, fhevm
@@ -185,7 +184,7 @@ describe("BatchedStealthWrapAdapter", () => {
     });
 
     // `_recordBatchedDeposit` is advertised as the reusable hook for adapters that acquire funds
-    // some other way. Those can hold only transient authorization on the amount — which expires at
+    // some other way. Those can hold only transient authorization on the amount, which expires at
     // the end of the transaction, so finalize could never touch the stored ciphertext again.
     it("persists ACL access to eAmount for a subclass that supplies it transiently", async () => {
       const {

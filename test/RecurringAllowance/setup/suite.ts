@@ -140,12 +140,12 @@ export function useAllowanceSuite () {
 
   /** Make the RecurringAllowance contract an ERC-7984 operator for `who` (~100y). */
   const approveOperator = async (who: WalletWithAccount) => {
-    // ERC-7984 `until` is uint48 — viem types it as `number`.
+    // ERC-7984 `until` is uint48; viem types it as `number`.
     const until = Number(await now()) + 3_153_600_000;
     await sendOk(token.write.setOperator([allowance.address, until], txOpts(who.account)));
   };
 
-  /** Mint + operator in one go — the standard per-test user setup. */
+  /** Mint + operator in one go: the standard per-test user setup. */
   const fundUser = async (who: WalletWithAccount, amount: bigint) => {
     await mintTo(who, amount);
     await approveOperator(who);
@@ -187,7 +187,7 @@ export function useAllowanceSuite () {
     ], fheTxOpts(p.spender.account)));
   };
 
-  /** Spend WITHOUT an explicit gas limit — use with assertRevertsWith so viem simulates. */
+  /** Spend WITHOUT an explicit gas limit; use with assertRevertsWith so viem simulates. */
   const spendExpectingRevert = async (p: SpendParams) => {
     const { handle, inputProof } = await encAmount(allowance.address, p.spender.account.address, p.amount);
     return allowance.write.transferFrom([

@@ -46,7 +46,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
   });
 
   // An empty proof makes FHE.fromExternal return the handle verbatim, so a non-Uint64 handle would
-  // become Permission.limit and every later FHE.le against it reverts — inside _evaluatePermissions,
+  // become Permission.limit and every later FHE.le against it reverts, inside _evaluatePermissions,
   // which runs before tryTransferFrom's try/catch, so one such row kills a whole batch.
   it("rejects an empty inputProof on creation (updatePermission's sentinel does not apply here)", async () => {
     const { H, token, allowance } = S.ctx();
@@ -85,7 +85,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
 
     // A SECOND permission under the same key: the contract skips re-granting the shared
     // encrypted-zero to save gas, so this checks the spender can still decrypt its
-    // freshly-created (still-zero) spent — i.e. the optimization didn't under-grant.
+    // freshly-created (still-zero) spent, i.e. the optimization didn't under-grant.
     await S.setPermission({
       user: alice,
       spender: bob.account.address,
@@ -272,7 +272,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const before = await S.getPermission(alice.account.address, bob.account.address, 0n);
 
     // A wallet echoes back the FULL current record (same duration and startTime, both
-    // nonzero). This must be a no-op for the grid — not a silent budget refresh.
+    // nonzero). This must be a no-op for the grid, not a silent budget refresh.
     await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,

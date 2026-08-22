@@ -19,12 +19,12 @@ abstract contract UnorderedNonces {
     /// @dev A SINGLE nonce space per owner, shared by every permit type that consumes it
     ///      (in {RecurringAllowance}, both PermitGrant and PermitSpend). Integrators MUST
     ///      allocate nonces from one shared sequence per owner (a global counter, or random
-    ///      256-bit values) — NOT restart from 0 per permit type, or two permits would
+    ///      256-bit values) rather than restarting from 0 per permit type, or two permits would
     ///      collide and the first submitted would silently invalidate the other.
     mapping(address owner => mapping(uint256 wordPos => uint256 bitmap)) public nonceBitmap;
 
     /**
-     * @notice Burn arbitrary nonces for `msg.sender` — cancels any signed-but-unsubmitted
+     * @notice Burn arbitrary nonces for `msg.sender`; cancels any signed-but-unsubmitted
      *         permits carrying them. Setting already-used bits is a no-op.
      * @param wordPos Which 256-nonce word to write
      * @param mask Bits to set in that word

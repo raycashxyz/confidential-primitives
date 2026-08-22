@@ -45,7 +45,7 @@ describe("RecurringAllowance: periods and security regressions", () => {
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(900n);
     expect(await S.balanceOf(carol)).toBe(1500n);
 
-    // startTime is the immutable grid anchor — resets never move it
+    // startTime is the immutable grid anchor; resets never move it
     const after = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(after.startTime).toBe(startTime);
   });
@@ -183,7 +183,7 @@ describe("RecurringAllowance: periods and security regressions", () => {
 
   // REGRESSION (high finding): moving startTime forward used to leave
   // lastUpdated < startTime, so the reset math (`lastUpdated - startTime`) panicked
-  // once the permission reactivated — permanently bricking the key.
+  // once the permission reactivated, permanently bricking the key.
   it("survives a startTime moved into the future (no underflow panic)", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;

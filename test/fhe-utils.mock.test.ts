@@ -1,8 +1,8 @@
 /**
  * FHEUtils, tested directly rather than through the contracts that use it.
  *
- * The ACL containment rests on the BEHAVIOUR of `FHEVMExecutor.verifyInput` — that it grants access
- * to its own `msg.sender` and to nobody else — not on its signature, so a dependency bump could
+ * The ACL containment rests on the BEHAVIOUR of `FHEVMExecutor.verifyInput` (that it grants access
+ * to its own `msg.sender` and to nobody else), not on its signature, so a dependency bump could
  * break it silently, with no compiler error. These assertions are the guard: if they fail after an
  * `@fhevm/solidity` upgrade, the import no longer contains the grant and every consumer is affected.
  */

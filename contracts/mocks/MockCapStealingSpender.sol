@@ -9,13 +9,13 @@ import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
  * @dev A CONTRACT spender that tries to read the cheque cap it was handed.
  *
  *      The cap is the owner's private ceiling for one cheque: encrypted by the owner, bound to the
- *      spender so only they can submit it, and never granted onward — `permitTransferFrom` shares
+ *      spender so only they can submit it, and never granted onward: `permitTransferFrom` shares
  *      only `transferred`. The spender is meant to learn whether their request fit, not how much
  *      room there was.
  *
  *      `FHE.fromExternal` would break that: it grants the submitter transient ACL access, and this
  *      contract is still executing in the same transaction when `permitTransferFrom` returns, so it
- *      could persist that access and decrypt the cap off-chain. The handle is no secret either — it
+ *      could persist that access and decrypt the cap off-chain. The handle is no secret either: it
  *      is `permit.capHandle`, straight out of its own calldata. Importing through
  *      {FHEUtils-fromExternal} means the grant never reaches it, so both attempts below revert
  *      `SenderNotAllowed` at the ACL and {reportSelfAccess} is false.

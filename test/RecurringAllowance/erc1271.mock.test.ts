@@ -172,7 +172,7 @@ describe("RecurringAllowance: ERC-1271 signers and cross-account replay", () => 
       ...grant
     });
 
-    // Replay against wallet B (same signer) reverts — the digest binds owner=B now.
+    // Replay against wallet B (same signer) reverts: the digest binds owner=B now.
     await assertRevertsWith(
       allowance.write.permitSetPermission([walletB.address, grant, inputProof, signature], txOpts(bob.account)),
       "InvalidSigner",

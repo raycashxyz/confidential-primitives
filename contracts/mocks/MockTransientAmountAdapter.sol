@@ -7,7 +7,7 @@ import {BatchedStealthWrapAdapter} from "../adapters/BatchedStealthWrapAdapter.s
 
 /**
  * @dev A derived adapter that records a deposit whose `eAmount` it holds only TRANSIENT
- *      authorization on — the shape you get when confidential funds arrive through a callback or a
+ *      authorization on: the shape you get when confidential funds arrive through a callback or a
  *      pre-existing balance rather than `_wrapIntoEscrow` (which grants persistent access itself).
  *
  *      `_recordBatchedDeposit` is the advertised storage boundary for exactly these adapters, so it
@@ -30,7 +30,7 @@ contract MockTransientAmountAdapter is BatchedStealthWrapAdapter {
         bytes calldata inputProof
     ) external nonReentrant returns (uint256 slot) {
         eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
-        euint64 eAmount = FHE.asEuint64(amount); // transient only — deliberately no allowThis
+        euint64 eAmount = FHE.asEuint64(amount); // transient only; deliberately no allowThis
         slot = _recordBatchedDeposit(msg.sender, amount, eAmount, verifiedRecipient);
     }
 }

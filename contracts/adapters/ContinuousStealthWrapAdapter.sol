@@ -21,30 +21,30 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         - COLD START. Finalization needs at least `minDecoys` existing deposits, but {initWrap}
  *           has no matching floor: it escrows funds happily into a pool too small to finalize from.
  *           The first `minDecoys - 1` depositors in a quiet deployment simply wait. They are not
- *           stuck — {initWrap} is permissionless, so a depositor can fund the missing deposits
- *           themselves — but {WrapInitiated} publishes depositor and clear amount, so self-help
- *           means creating a visible run of deposits attributable to them, which costs exactly the
+ *           stuck ({initWrap} is permissionless, so a depositor can fund the missing deposits
+ *           themselves), but {WrapInitiated} publishes depositor and clear amount, so self-help
+ *           means creating a visible run of deposits attributable to them, which costs them the
  *           privacy they came for. Seed the pool at deployment, or accept the wait.
  *
  *         - SPENT SLOTS STILL COUNT. A matched deposit's `amount` is rewritten to an encrypted
  *           zero, but the slot stays in the push-only array and remains a legal id forever. It is
- *           also publicly indistinguishable from a live one — `amount` is still a handle and
+ *           also publicly indistinguishable from a live one: `amount` is still a handle and
  *           `originalAmount` never changes. So an early sybil can seed the pool, drain their own
  *           deposits, and leave a victim whose only legal id sets are mostly attacker-owned; the
  *           attacker then knows which ids are not the recipient's and links {WrapInitiated} to
- *           {WrapFinalized}. Choosing ids well is the defence, and it is the caller's job —
+ *           {WrapFinalized}. Choosing ids well is the defence, and it is the caller's job;
  *           `ids.length >= minDecoys` says nothing about how many of them are real.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on the configurable decoy floor. `minDecoys` is a MINIMUM: every finalize must
     ///      scan at least that many ids, so a floor above what one transaction can execute leaves a
-    ///      deployment where deposits still succeed but NO legal `ids` array can ever be finalized —
+    ///      deployment where deposits still succeed but NO legal `ids` array can ever be finalized:
     ///      fewer ids revert `TooFewDecoys`, more revert on the FHEVM budget. `minDecoys` is
     ///      immutable and there is no alternative finalization path, so those funds are stuck.
     ///
-    ///      finalize does a fixed amount of FHE work per slot — scalar `eq` on Uint160 (117,000) +
-    ///      payout `select` (55,000) + zeroing `select` (55,000) = 227,000 HCU, the `eq` being the
-    ///      SCALAR cost because the recipient is cleartext (see {finalizeWrap}) — plus (N-1) tree
+    ///      finalize does a fixed amount of FHE work per slot: scalar `eq` on Uint160 (117,000) +
+    ///      payout `select` (55,000) + zeroing `select` (55,000) = 227,000 HCU (the `eq` is the
+    ///      SCALAR cost because the recipient is cleartext; see {finalizeWrap}), plus (N-1) tree
     ///      `add`s at 162,000. So the binding limit is the 20M TOTAL-HCU/tx budget, not the 5M DEPTH
     ///      cap: the tree holds depth at 1,144,000 (23% of that cap) for every N in range.
     ///
@@ -53,7 +53,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     ///      (`389,000N - 162,000`, so 19,677,000 at N=51 against a cap enforced as `>=`); the
     ///      one-slot difference IS the wrapper's own transfer work, which spends from the same
     ///      budget. 40 keeps ~20% headroom below that measured cliff, because a bare mock is the
-    ///      cheapest wrapper there is — a hooked wrapper's modules add to the same budget and can be
+    ///      cheapest wrapper there is; a hooked wrapper's modules add to the same budget and can be
     ///      installed after deposits are escrowed (see the README's wrapper-compatibility note).
     ///
     ///      This bounds only the configurable FLOOR. A caller may still pass more ids than this and
@@ -117,9 +117,10 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
      *         zeroing each matched deposit so it cannot pay again.
      *
      * @dev REQUIRES AN EXACT-OR-REVERT (at least all-or-nothing) WRAPPER. Matched deposits are zeroed
-     *      BEFORE the transfer, so the zeroing is the nullifier. If the wrapper then soft-fails —
-     *      returns an encrypted zero or partial on a freeze / pause / blacklist / hook veto instead of
-     *      reverting — the claim is already consumed and the funds strand, with no way to retry.
+     *      BEFORE the transfer, so the zeroing is the nullifier. If the wrapper then soft-fails
+     *      (returns an encrypted zero or a partial amount on a freeze, pause, blacklist or hook veto
+     *      instead of reverting), the claim is already consumed and the funds strand with no way to
+     *      retry.
      *
      *      Unlike {BatchedStealthWrapAdapter}, this CANNOT be made retry-safe. That adapter recomputes
      *      a per-(batch, recipient) `matched` and credits an encrypted `claimed` ledger with what
@@ -144,8 +145,9 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
 
             Deposit storage d = deposits[i];
             // Scalar overload (cleartext rhs): `recipient` is public calldata, re-emitted indexed
-            // in {WrapFinalized}, so trivially encrypting it first bought no confidentiality and
-            // cost 20,000 HCU per scanned slot. Since the HCU budget is what bounds `ids.length`,
+            // in {WrapFinalized}, so trivially encrypting it first bought no confidentiality, and the
+            // ciphertext-ciphertext `eq` cost 20,000 HCU more per scanned slot than the scalar one.
+            // Since the HCU budget is what bounds `ids.length`,
             // and `ids.length` IS the anonymity set, that was a privacy cost as well as a gas one.
             //
             // The scalar path skips the operand type check, which is only safe because every stored

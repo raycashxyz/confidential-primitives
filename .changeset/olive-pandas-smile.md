@@ -2,7 +2,7 @@
 "@raycashxyz/confidential-primitives": minor
 ---
 
-New `FHEUtils` library (`contracts/fhe/FHEUtils.sol`) — an addition to `@fhevm/solidity` holding
+New `FHEUtils` library (`contracts/fhe/FHEUtils.sol`), extending `@fhevm/solidity` with
 what contracts that handle ciphertexts they did not create keep needing: `fromExternal` (imports that
 grant ACL access to the importing contract only, and always type-check the handle), `isAuthoredBy`
 (provenance of a handle an untrusted contract hands back) and `sum` (tree reduction that keeps FHE
@@ -14,7 +14,7 @@ thin wrappers over the library, so their own APIs and any derived adapters are u
 
 `FHE.fromExternal` ends with a second `IACL.allowTransient(result, msg.sender)` in the calling
 contract's frame, so whoever submitted the ciphertext receives transient ACL access to it. An EOA
-cannot use that, but a contract caller — still executing in the same transaction — can promote it
+cannot use that, but a contract caller, still executing in the same transaction, can promote it
 with `FHE.allow` or publish it with `FHE.makePubliclyDecryptable`, then decrypt off-chain. Passing the
 expected `FheType` to the coprocessor also closes `fromExternal`'s empty-proof branch, which returns a
 handle verbatim after only an ACL check and is the entry point for the wrong-typed-handle attacks.
@@ -22,8 +22,8 @@ The proof binding is unchanged: the ciphertext still verifies against a named `u
 submittable only by the party it was issued to.
 
 This fixes one previously unreported leak. `RecurringAllowance.permitTransferFrom` imported the
-cheque's encrypted cap — chosen by the OWNER, bound to the spender, and deliberately never granted
-onward, since only `transferred` is shared — with `FHE.fromExternal`. A contract spender could
+cheque's encrypted cap (chosen by the OWNER, bound to the spender, and never granted
+onward, since only `transferred` is shared) with `FHE.fromExternal`. A contract spender could
 therefore persist the cap handle (it is `permit.capHandle`, already in their own calldata) and
 decrypt the owner's private ceiling. Not theft, but it removes the uncertainty the design relies on:
 an over-request moves an encrypted zero and still burns the nonce, so a spender who cannot see the
@@ -32,5 +32,5 @@ and then tries to escalate.
 
 The stealth adapters' recipient import already had this containment; it now shares the library
 implementation rather than open-coding it. `test/fhe-utils.mock.test.ts` asserts the library's
-guarantees directly — including that the submitter ends up with no access — so an
+guarantees directly (including that the submitter ends up with no access), so an
 `@fhevm/solidity` bump that changed `verifyInput`'s ACL behaviour fails there rather than silently.

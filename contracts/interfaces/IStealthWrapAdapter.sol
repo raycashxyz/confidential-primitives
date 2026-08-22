@@ -11,8 +11,9 @@ import {externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
  *         ERC7984ERC20Wrapper on the Zama FHEVM.
  * @dev ERC-7984 compliance alone is NOT sufficient. Implementations require Zama `eaddress` /
  *      `euint64` handles, the FHEVM ACL and coprocessor-issued input proofs, plus the wrapper
- *      extensions `underlying()` and `rate()` — which are not part of ERC-7984 itself. The wrapper
- *      must also be exact-or-revert; see {StealthWrapAdapter}.
+ *      extensions `underlying()` and `rate()`, which are not part of ERC-7984 itself. The wrapper
+ *      must be exact-or-revert on `wrap`, and on `confidentialTransfer` where the adapter's
+ *      finalize path is not retry-safe; see {StealthWrapAdapter}.
  */
 interface IStealthWrapAdapter {
     /// @dev The requested clear amount wraps to zero after applying the underlying wrapper rate.
@@ -52,7 +53,7 @@ interface IStealthWrapAdapter {
 
     /// @notice EXCLUSIVE upper bound for enumerating deposit slots: every recorded deposit lives at
     ///         some `slot < getDepositsLength()`.
-    /// @dev Not necessarily the NUMBER of deposits. An adapter may index slots sparsely — the
+    /// @dev Not necessarily the NUMBER of deposits. An adapter may index slots sparsely: the
     ///      batched one uses `batchId * maxBatchDeposits + batchIndex`, so a partially filled batch
     ///      that gets sealed leaves its unused slots empty forever. Readers must therefore treat
     ///      this as a bound and skip empty slots (an unwritten `deposits(slot)` has a zero
@@ -69,7 +70,7 @@ interface IStealthWrapAdapter {
 
     /// @notice Finalize pending deposits, transferring their homomorphic sum to `recipient`.
     /// @param ids Finalization units: deposit indices for continuous adapters or batch ids for batched
-    ///        adapters. MUST be strictly ascending — sorted, no duplicates; any non-increasing pair
+    ///        adapters. MUST be strictly ascending (sorted, no duplicates); any non-increasing pair
     ///        reverts `DuplicateId` (so an unsorted-but-unique array is rejected too).
     /// @param recipient Non-zero address to match deposits against and transfer the total to.
     function finalizeWrap(uint256[] calldata ids, address recipient) external;

@@ -1,5 +1,5 @@
 /**
- * Snapshot harness — the fast path for the tevm + FHEVM mock suite.
+ * Snapshot harness: the fast path for the tevm + FHEVM mock suite.
  *
  * Booting a fresh EVM and re-installing the whole FHEVM host-contract stack
  * (`createFhevmTevmRuntime`, ~0.9s) plus a MockUSDC deploy (~0.5s) costs ~1.4s. Paying that
@@ -9,7 +9,7 @@
  *     runs each file in its own process, so this is naturally per-file isolated), lets the
  *     file deploy its shared baseline (e.g. MockUSDC), then snapshots EVM state.
  *   - `reset()` (call in `beforeEach`) restores that snapshot in ~a few ms instead of
- *     rebuilding — the coprocessor's ciphertext DB is content-addressed, so it needs no reset.
+ *     rebuilding (the coprocessor's ciphertext DB is content-addressed, so it needs no reset).
  *
  * Per-test contracts must still be deployed inside each test with
  * `force: true`: `loadState` rolls the chain back, but deployoor's in-memory store does not,
@@ -25,7 +25,7 @@ export interface Harness extends TestEnvironment {
 
 /**
  * Boot one environment, run `deployBaseline` against it (deploy anything every test in the
- * file shares — e.g. MockUSDC), then snapshot. The returned `reset()` restores that snapshot.
+ * file shares, e.g. MockUSDC), then snapshot. The returned `reset()` restores that snapshot.
  */
 export async function createHarness (
   deployBaseline?: (env: TestEnvironment) => Promise<void>,

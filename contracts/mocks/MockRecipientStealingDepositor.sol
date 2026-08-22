@@ -9,8 +9,8 @@ import {IStealthWrapAdapter} from "../interfaces/IStealthWrapAdapter.sol";
 /**
  * @dev The recipient-privacy attacker of the DEPOSITOR TRUST note on {StealthWrapAdapter}: a CONTRACT
  *      depositor that tries to unmask the recipient it just deposited for. It deposits through the
- *      adapter, then — still inside the same transaction, while any transient ACL grant would still
- *      be live — tries to turn that access into something it can read off-chain.
+ *      adapter, then (still inside the same transaction, while any transient ACL grant would still
+ *      be live) tries to turn that access into something it can read off-chain.
  *
  *      Because {StealthWrapAdapter._importRecipient} imports the ciphertext via the coprocessor's
  *      `verifyInput` directly (never `FHE.fromExternal`), the adapter grants the depositor no ACL

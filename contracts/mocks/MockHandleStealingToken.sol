@@ -12,7 +12,7 @@ import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC798
  *      Handles are global rather than namespaced per token, so without a provenance check the
  *      victim's `limit`/`spent` ciphertext flows into the attacker's own permission accounting and
  *      is then granted to them for decryption. `stolenHandle` is deliberately a handle this
- *      contract was never authorized on — that is exactly what
+ *      contract was never authorized on, which is what
  *      {RecurringAllowance-_isTokenAuthored} detects.
  */
 contract MockHandleStealingToken is ZamaEthereumConfig, ERC7984 {
@@ -24,7 +24,7 @@ contract MockHandleStealingToken is ZamaEthereumConfig, ERC7984 {
         _mint(to, FHE.fromExternal(amount, inputProof));
     }
 
-    /// @param handle Any ciphertext handle — typically another user's `limit`, read straight out of
+    /// @param handle Any ciphertext handle, typically another user's `limit`, read straight out of
     ///        {RecurringAllowance-getPermission}. No proof or ACL grant needed to name it.
     function setStolenHandle(euint64 handle) external {
         _stolenHandle = handle;

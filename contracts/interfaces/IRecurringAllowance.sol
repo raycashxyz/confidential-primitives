@@ -27,7 +27,7 @@ interface IRecurringAllowance {
      */
     struct Permission {
         /// @dev Stable identifier, unique across all users. Indices shift (swap-and-pop),
-        ///      ids never do — state-changing calls that take an index also take the id.
+        ///      ids never do; state-changing calls that take an index also take the id.
         uint256 id;
         /// @dev Encrypted per-period spending limit.
         euint64 limit;
@@ -66,7 +66,7 @@ interface IRecurringAllowance {
     /**
      * @dev Signed authorization to CREATE a permission (the gasless-grant flow).
      *      `limitHandle` is the bytes32 handle of an encrypted limit whose input proof
-     *      the owner created bound to `(this contract, spender)` — so only `spender`
+     *      the owner created bound to `(this contract, spender)`, so only `spender`
      *      can submit it. Signing the handle commits the owner to that exact ciphertext.
      */
     struct PermitGrant {
@@ -74,21 +74,21 @@ interface IRecurringAllowance {
         address spender;
         /// @dev Handle of the encrypted per-period limit (an `externalEuint64`).
         bytes32 limitHandle;
-        /// @dev Same sentinel semantics as {setPermission} — 0 means max / "at submission".
+        /// @dev Same sentinel semantics as {setPermission}: 0 means max / "at submission".
         uint64 duration;
         uint64 startTime;
         uint64 endTime;
         /// @dev Unordered nonce (see {UnorderedNonces}). PermitGrant and PermitSpend draw
-        ///      from the SAME per-owner nonce space — allocate from one shared sequence.
+        ///      from the SAME per-owner nonce space; allocate from one shared sequence.
         uint256 nonce;
-        /// @dev Signature expiry — the permit cannot be submitted after this timestamp.
+        /// @dev Signature expiry: the permit cannot be submitted after this timestamp.
         uint256 sigDeadline;
     }
 
     /**
      * @dev Signed authorization for a ONE-SHOT transfer up to an encrypted cap (the
      *      "confidential cheque"). Consumed on any SUCCESSFUL submission regardless of the
-     *      encrypted outcome — a cheque against an insufficient (but initialized) balance still
+     *      encrypted outcome: a cheque against an insufficient (but initialized) balance still
      *      burns its nonce. A token that REVERTS instead of returning an encrypted zero rolls the
      *      nonce back with it, leaving the cheque submittable until `sigDeadline`; see
      *      {RecurringAllowance-permitTransferFrom}.
@@ -101,7 +101,7 @@ interface IRecurringAllowance {
         /// @dev Bound recipient; address(0) lets the spender choose at execution.
         address to;
         /// @dev Unordered nonce (see {UnorderedNonces}). Shares the per-owner nonce space
-        ///      with PermitGrant — allocate from one shared sequence.
+        ///      with PermitGrant; allocate from one shared sequence.
         uint256 nonce;
         uint256 sigDeadline;
     }
@@ -124,7 +124,7 @@ interface IRecurringAllowance {
     /// @dev The (user, token, spender) key has no permission with this stable id.
     error PermissionNotFound(uint256 permissionId);
     /// @dev `permissionIndex` is past the end of the key's permission array. Indices are not stable
-    ///      across writes (swap-and-pop), so re-read before indexing — or address by id instead.
+    ///      across writes (swap-and-pop), so re-read before indexing, or address by id instead.
     error PermissionIndexOutOfRange(uint256 permissionIndex);
     /// @dev `pairIndex` is past the end of the user's granted-pair enumeration.
     error GrantedPairIndexOutOfRange(uint256 pairIndex);
@@ -198,7 +198,7 @@ interface IRecurringAllowance {
     event PermitEpochIncremented(address indexed owner, uint256 newEpoch);
 
     /// @notice A spend was executed through the allowance. `transferred` is the encrypted
-    ///         amount actually moved — an observer cannot tell a denied spend (0) from a
+    ///         amount actually moved; an observer cannot tell a denied spend (0) from a
     ///         permitted one. `from`/`to` are already public in the token's own
     ///         `ConfidentialTransfer` event, so this adds no new leak.
     event AllowanceTransfer(
@@ -210,7 +210,7 @@ interface IRecurringAllowance {
     );
 
     /// @notice A {tryTransferFrom} item was skipped for a cleartext reason (encrypted
-    ///         denials are NOT skips — they execute and transfer an encrypted zero).
+    ///         denials are NOT skips; they execute and transfer an encrypted zero).
     event TransferSkipped(
         address indexed from,
         address indexed to,
@@ -293,7 +293,7 @@ interface IRecurringAllowance {
     function tryTransferFrom(TransferDetails[] calldata transfers) external returns (bool[] memory executed);
 
     /// @notice Create a permission from `owner`'s off-chain {PermitGrant} signature (the
-    ///         gasless-grant flow — the named spender submits and pays gas).
+    ///         gasless-grant flow: the named spender submits and pays gas).
     /// @return permissionId Stable id of the new permission.
     function permitSetPermission(
         address owner,
@@ -336,7 +336,7 @@ interface IRecurringAllowance {
     function getPermissionCount(address user, address token, address spender) external view returns (uint256);
 
     /// @notice How many permissions a spend against the key would evaluate right now (excludes
-    ///         expired and not-yet-started entries) — the count that drives its FHE cost. Use it to
+    ///         expired and not-yet-started entries): the count that drives its FHE cost. Use it to
     ///         size `transferFrom`/`tryTransferFrom` batches against the per-transaction budget.
     function activePermissionCount(
         address user,
@@ -347,11 +347,11 @@ interface IRecurringAllowance {
     /// @notice Number of (token, spender) pairs for which `user` has stored permissions.
     function getGrantedPairCount(address user) external view returns (uint256);
 
-    /// @notice The (token, spender) pair at `index` (unstable order — swap-and-pop).
+    /// @notice The (token, spender) pair at `index` (unstable order, swap-and-pop).
     function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory);
 
     /// @notice Every (token, spender) pair for which `user` has stored permissions.
-    ///         Entries may hold only EXPIRED permissions until a write prunes them —
+    ///         Entries may hold only EXPIRED permissions until a write prunes them;
     ///         read the permissions themselves for freshness.
     function getGrantedPairs(address user) external view returns (TokenSpenderPair[] memory);
 }

@@ -12,7 +12,7 @@ import { getOrDeployMockCapStealingSpender } from "../../src/deployers/MockCapSt
 describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   const S = useAllowanceSuite();
 
-  // The struct passed to the contract call (no owner/epoch — those are bound at
+  // The struct passed to the contract call (no owner/epoch; those are bound at
   // verification from the function arg and on-chain storage, not the calldata struct).
   type GrantStruct = Omit<PermitGrantMessage, "owner" | "epoch">;
   type SpendStruct = Omit<PermitSpendMessage, "owner" | "epoch">;
@@ -91,8 +91,8 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
 
   // The cheque path is the most direct version of the stolen-return-handle attack: it hands the
   // token's return value straight to `msg.sender` via allowTransient, so a contract spender can
-  // persist it with FHE.allow in the same transaction — no laundering through `spent` and no
-  // arithmetic inference needed, unlike the transferFrom paths. Same provenance check guards it.
+  // persist it with FHE.allow in the same transaction, with no laundering through `spent` and no
+  // arithmetic inference needed (unlike the transferFrom paths). Same provenance check guards it.
   it("rejects a token-returned handle the token is not authorized on, through the cheque path", async () => {
     const { H, allowance } = S.ctx();
     const { deployer, alice, bob, carol } = H.wallets;
@@ -211,7 +211,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     if (!access) throw new Error("no SpenderSelfAccess event");
     expect(access.args.spenderAllowedOnCap).toBe(false);
 
-    // The cheque really did execute — the spend is not silently a no-op.
+    // The cheque really did execute; the spend is not silently a no-op.
     expect(await S.balanceOf(carol)).toBe(300n);
 
     // And escalating that access reverts at the ACL. Fresh nonce: the first cheque burned nonce 0.
@@ -247,7 +247,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       limit: 500n
     });
 
-    // BOB submits — alice signs only.
+    // BOB submits; alice signs only.
     const receipt = await S.sendOk(allowance.write.permitSetPermission([
       alice.account.address,
       grant,

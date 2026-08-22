@@ -67,7 +67,7 @@ export function useBatchedSuite () {
     const { deployer } = wallets;
 
     // FHE calls (fheTxOpts) carry an explicit gas limit, so viem skips simulation and an
-    // on-chain revert lands as a receipt instead of a throw — check status so a failed
+    // on-chain revert lands as a receipt instead of a throw; check status so a failed
     // deposit/finalize surfaces immediately rather than corrupting later assertions.
     const send = async (p: Promise<`0x${string}`>) => {
       const receipt = await publicClient.waitForTransactionReceipt({ hash: await p });

@@ -245,7 +245,7 @@ describe("RecurringAllowance: spending", () => {
     expect(await S.balanceOf(carol)).toBe(0n);
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(0n); // nothing consumed
 
-    // After topping up, the same pull succeeds — the failed attempt did not burn budget.
+    // After topping up, the same pull succeeds: the failed attempt did not burn budget.
     await S.mintTo(alice, 200n);
     await S.spend({
       spender: bob,
