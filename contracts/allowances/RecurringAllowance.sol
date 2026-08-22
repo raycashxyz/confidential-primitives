@@ -482,8 +482,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /// @dev All-or-nothing oblivious amount. `requested` when it is at or below the signed cap, an
-    ///      encrypted zero otherwise, so a request of 150 against a cap of 100 moves zero. The
-    ///      nonce is consumed either way, so the signer must issue a fresh cheque to retry.
+    ///      encrypted zero otherwise, so a request of 150 against a cap of 100 moves zero. A
+    ///      successful call consumes the nonce either way, so the signer must issue a fresh cheque
+    ///      to retry.
     function _chequeAmount(
         bytes32 capHandle,
         bytes calldata capProof,
