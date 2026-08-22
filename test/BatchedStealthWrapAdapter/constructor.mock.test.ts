@@ -463,4 +463,35 @@ describe("BatchedStealthWrapAdapter", () => {
     });
   });
 
+  // The escrow helpers make external calls and the record step commits the deposit, so each checks
+  // that it runs inside a `nonReentrant` entrypoint rather than documenting the requirement.
+  describe("reentrancy guard", () => {
+    it("refuses the escrow helpers outside a nonReentrant entrypoint", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockBatchedStealthWrapAdapterExtension({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
+
+      await assertRevertsWith(
+        wrapper.write.wrapUnguarded([AMOUNT], txOpts(alice.account)),
+        "ReentrancyGuardRequired",
+      );
+      await assertRevertsWith(
+        wrapper.write.recordUnguarded([AMOUNT], txOpts(alice.account)),
+        "ReentrancyGuardRequired",
+      );
+      await assertRevertsWith(
+        wrapper.write.transferUnguarded([alice.account.address], txOpts(alice.account)),
+        "ReentrancyGuardRequired",
+      );
+    });
+  });
+
 });

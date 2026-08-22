@@ -35,6 +35,8 @@ interface IStealthWrapAdapter {
     ///      default because a reused one publicly links its deposits. Ask the recipient for a fresh
     ///      encryption. See {StealthWrapAdapter-_consumeRecipientHandle} for adapters that permit reuse.
     error RecipientHandleAlreadyUsed();
+    /// @dev An escrow helper was reached outside a `nonReentrant` entrypoint.
+    error ReentrancyGuardRequired();
 
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);

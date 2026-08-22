@@ -43,8 +43,8 @@ import {FHEUtils} from "../../fhe/FHEUtils.sol";
  *      as safe as the modules its admin can install.
  *
  *      Reentrancy. {_wrapIntoEscrow} calls out before the caller records its deposit and
- *      {_transferWrapped} calls out next to the claim commit, so both must run inside a
- *      `nonReentrant` entrypoint.
+ *      {_transferWrapped} calls out next to the claim commit, so both run only inside a
+ *      `nonReentrant` entrypoint and revert {ReentrancyGuardRequired} otherwise.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -55,6 +55,12 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
 
     /// @dev Recipient handles that have already funded a deposit.
     FHEUtils.HandleSet internal _recipientHandles;
+
+    /// @dev Reverts unless the call is inside a `nonReentrant` entrypoint.
+    modifier onlyGuarded() {
+        if (!_reentrancyGuardEntered()) revert ReentrancyGuardRequired();
+        _;
+    }
 
     constructor(IERC7984ERC20Wrapper confidentialWrapper_) {
         if (address(confidentialWrapper_) == address(0)) revert ZeroAddress();
@@ -132,7 +138,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      * @return wrappedUnderlying The underlying amount wrapped.
      * @return wrappedAmount The resulting encrypted balance, persisted to this adapter.
      */
-    function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
+    function _wrapIntoEscrow(address depositor, uint256 amount) internal onlyGuarded returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
         if (amount == 0) revert ZeroAmount();
 
         uint256 rate_ = CONFIDENTIAL_WRAPPER.rate();
@@ -149,7 +155,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
 
     /// @dev Transfer `amount` of escrowed confidential balance to `recipient` and return what the
     ///      wrapper reports it moved.
-    function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
+    function _transferWrapped(address recipient, euint64 amount) internal onlyGuarded returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
         transferred = CONFIDENTIAL_WRAPPER.confidentialTransfer(recipient, amount);

@@ -276,8 +276,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         slot = _pullAndRecord(amount, eRecipient, inputProof);
     }
 
-    /// @dev Shared body of the two deposit entry points. Callers must be `nonReentrant`, because the token
-    ///      pull and wrap are external calls made before the deposit is recorded.
+    /// @dev Shared body of the two deposit entry points.
     function _pullAndRecord(
         uint256 amount,
         externalEaddress eRecipient,
@@ -289,19 +288,17 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     /**
-     * @dev Record an already-wrapped deposit in the current batch.
-     *
-     *      Kept separate from token acquisition so derived adapters can source deposits
-     *      differently while preserving this adapter's batch selection, close, and
-     *      accounting semantics. Callers that acquire tokens through external calls
-     *      must make their public entrypoint `nonReentrant` before calling this.
+     * @dev Record an already-wrapped deposit in the current batch. Separate from token acquisition
+     *      so derived adapters can source deposits differently while keeping this adapter's batch
+     *      selection, close and accounting. Runs only inside a `nonReentrant` entrypoint, like
+     *      every deposit path.
      */
     function _recordBatchedDeposit(
         address depositor,
         uint256 wrappedUnderlying,
         euint64 eAmount,
         eaddress verifiedRecipient
-    ) internal returns (uint256 slot) {
+    ) internal onlyGuarded returns (uint256 slot) {
         uint256 batchId = currentBatchId;
         Batch storage batch = _batches[batchId];
         // INVARIANT: the batch at `currentBatchId` is always open with room. Everything that fills

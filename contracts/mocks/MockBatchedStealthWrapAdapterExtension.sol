@@ -36,6 +36,20 @@ contract MockBatchedStealthWrapAdapterExtension is BatchedStealthWrapAdapter {
         slot = _recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, verifiedRecipient);
     }
 
+    /// @dev The escrow helpers reached without `nonReentrant`. Each must revert
+    ///      `ReentrancyGuardRequired` before doing anything else.
+    function wrapUnguarded(uint256 amount) external returns (uint256 wrappedUnderlying, euint64 eAmount) {
+        return _wrapIntoEscrow(msg.sender, amount);
+    }
+
+    function recordUnguarded(uint256 amount) external returns (uint256 slot) {
+        return _recordBatchedDeposit(msg.sender, amount, E_ZERO, eaddress.wrap(0));
+    }
+
+    function transferUnguarded(address recipient) external returns (euint64 transferred) {
+        return _transferWrapped(recipient, E_ZERO);
+    }
+
     function finalizeWrap(uint256[] calldata ids, address) external override nonReentrant {
         if (ids.length == 0) revert FinalizeOverrideCalled();
     }
