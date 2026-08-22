@@ -19,10 +19,11 @@
 import {
   beforeAll, beforeEach, describe, expect, it
 } from "vitest";
-import { parseEventLogs, toFunctionSelector } from "viem";
+import { parseEventLogs } from "viem";
 import type { Hex } from "viem";
 
 import { createHarness } from "./setup/harness";
+import { assertRevertsWithSelector, SENDER_NOT_ALLOWED } from "./setup/asserts";
 import type { Harness } from "./setup/harness";
 import { encryptRecipient } from "./setup/fhe";
 import { txOpts, fheTxOpts } from "./setup/tx";
@@ -38,22 +39,6 @@ const SEAL_DELAY = 3600n;
 type USDC = Awaited<ReturnType<typeof getOrDeployMockUSDC>>["contract"];
 type Wrapper = Awaited<ReturnType<typeof getOrDeployMockERC7984ERC20Wrapper>>["contract"];
 type Attacker = Awaited<ReturnType<typeof getOrDeployMockRecipientStealingDepositor>>["contract"];
-
-// The ACL rejects an unauthorized allow / makePubliclyDecryptable with `SenderNotAllowed(address)`.
-// That error is not in the adapter or attacker ABI, so viem cannot name it and surfaces the raw
-// 4-byte selector in the revert message — derive the same selector from the signature and match it.
-const SENDER_NOT_ALLOWED = toFunctionSelector("SenderNotAllowed(address)").toLowerCase();
-
-const assertRevertsWithSelector = async (promise: Promise<unknown>, selector: string): Promise<void> => {
-  try {
-    await promise;
-  } catch (error) {
-    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-    if (message.includes(selector)) return;
-    throw new Error(`expected revert selector ${selector}, got: ${message}`);
-  }
-  throw new Error(`expected revert selector ${selector} but the call succeeded`);
-};
 
 describe("recipient privacy against the depositor (#36)", () => {
   let H: Harness;

@@ -2,14 +2,13 @@
 pragma solidity ^0.8.27;
 
 import {FHE, euint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
-import {Impl, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
-import {FheType} from "@fhevm/solidity/lib/FheType.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
+import {FHESafe} from "../../fhe/FHESafe.sol";
 
 /**
  * @title StealthWrapAdapter
@@ -194,33 +193,20 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
     }
 
     /**
-     * @dev Verify `eRecipient` against `inputProof` and return the `eaddress`, granting ACL access
-     *      to THIS adapter and to no one else. This is the whole of the recipient-privacy fix, so it
-     *      is `private`: it must not be bypassable or overridable.
+     * @dev Verify `eRecipient` against `inputProof` and return the `eaddress`, granting ACL access to
+     *      THIS adapter and to no one else. That containment is the whole of the recipient-privacy
+     *      fix, so this is `private`: it must not be bypassable or overridable.
      *
-     *      `FHE.fromExternal` would be the natural spelling and is wrong here. It expands to
-     *      `Impl.verify`, which does two things: it calls the coprocessor's `verifyInput` (whose own
-     *      `allowTransient(result, msg.sender)` grants THIS adapter, since the adapter is the executor's
-     *      caller), and THEN, back in the adapter's frame, it runs a second
-     *      `IACL.allowTransient(result, msg.sender)` where `msg.sender` is the depositor. That second
-     *      grant is the leak: it is the only reason the depositor ends up with ACL access at all.
+     *      The mechanism, and why `FHE.fromExternal` cannot be used here, are documented on
+     *      {FHESafe}. In short: `fromExternal` adds a second ACL grant naming the DEPOSITOR, which a
+     *      contract depositor can promote to permanent access before the transaction ends. The
+     *      proof binding is unchanged either way — it still names the depositor, which is what stops
+     *      a third party submitting the handle — so only the leak goes away.
      *
-     *      Calling `verifyInput` directly performs the identical coprocessor check with the identical
-     *      `(contractAddress = this, userAddress = depositor)` binding — so the depositor-bound proof
-     *      that stops third parties submitting the handle is unchanged — and stops after the executor's
-     *      grant to this adapter. The depositor is named only inside the proof and receives nothing.
-     *      The caller then persists the adapter's access with `FHE.allowThis`, exactly as before.
-     *
-     *      Reads the executor address from the same coprocessor config every `FHE.*` op resolves
-     *      through, so it tracks whatever {ZamaEthereumConfig} installed. If a future FHEVM release
-     *      changes which address `verifyInput` grants (it grants its `msg.sender` today), re-audit
-     *      this: the depositor-privacy guarantee rests on that line.
+     *      The caller then persists the adapter's access with `FHE.allowThis`.
      */
     function _importRecipient(externalEaddress eRecipient, bytes calldata inputProof) private returns (eaddress) {
-        IFHEVMExecutor coprocessor = IFHEVMExecutor(Impl.getCoprocessorConfig().CoprocessorAddress);
-        return eaddress.wrap(
-            coprocessor.verifyInput(externalEaddress.unwrap(eRecipient), msg.sender, inputProof, FheType.Uint160)
-        );
+        return FHESafe.fromExternal(eRecipient, inputProof, msg.sender);
     }
 
     /**

@@ -8,6 +8,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
+import {FHESafe} from "../fhe/FHESafe.sol";
 import {UnorderedNonces} from "./base/UnorderedNonces.sol";
 
 /**
@@ -161,7 +162,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         owner created via {setPermission}.
      * @dev The grant's `limitHandle` must come with an input proof the owner created
      *      bound to `(this, grant.spender)` — which is also why only the named spender
-     *      can submit: for anyone else `FHE.fromExternal` rejects the proof. The
+     *      can submit: for anyone else the coprocessor rejects the proof. The
      *      explicit {SpenderMismatch} check just fails faster and cleaner.
      *      Zero-valued time fields resolve AT SUBMISSION (startTime 0 = "when the
      *      spender activates it"), bounded by `sigDeadline`.
@@ -193,29 +194,28 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @dev Import a permission's encrypted limit. Both creation paths route through here so an
-     *      empty `inputProof` can never reach `FHE.fromExternal`.
+     * @dev Import a permission's encrypted limit. Both creation paths route through here.
      *
-     *      With a proof, `fromExternal` calls the coprocessor's `verifyInput`, which checks the
-     *      handle really is a `Uint64`. With an EMPTY proof it returns the handle verbatim after
-     *      nothing but an ACL check, so any handle the caller is allowed on — of any type — becomes
-     *      `Permission.limit`. A non-`Uint64` limit makes every later `FHE.le` against it revert
-     *      inside `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one
-     *      poisoned payer then aborts an entire {tryTransferFrom} batch instead of being skipped.
+     *      {FHESafe-fromExternal} passes the expected `Uint64` to the coprocessor, so a handle of any
+     *      other type reverts `InvalidType` before it can become `Permission.limit`. That matters
+     *      because a non-`Uint64` limit makes every later `FHE.le` against it revert inside
+     *      `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one poisoned payer
+     *      would abort an entire {tryTransferFrom} batch rather than being skipped.
      *
-     *      Creation always supplies a limit, so nothing legitimate needs the empty-proof path. Only
+     *      The empty-proof rejection is kept as an explicit first line — creation always supplies a
+     *      limit, and failing here is cheaper and names this contract's own error. Only
      *      {updatePermission} reads an empty proof as a sentinel ("leave the limit unchanged"),
-     *      which is why it keeps calling `FHE.fromExternal` behind its own `length > 0` gate.
+     *      behind its own `length > 0` gate.
      */
     function _verifyLimit(externalEuint64 limit, bytes calldata inputProof) private returns (euint64) {
         if (inputProof.length == 0) revert MissingInputProof();
-        return FHE.fromExternal(limit, inputProof);
+        return FHESafe.fromExternal(limit, inputProof, msg.sender);
     }
 
     /// @dev Cleartext half of permission creation, shared by {setPermission} and
     ///      {permitSetPermission}. Resolves the zero-sentinels, validates the window and
     ///      the per-key cap, prunes expired entries, and reports whether this will be the
-    ///      first live permission under the key. Runs BEFORE any `FHE.fromExternal` so a
+    ///      first live permission under the key. Runs BEFORE any ciphertext import so a
     ///      cleartext revert never pays for proof verification.
     function _validateNewPermission(
         address user,
@@ -321,13 +321,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         Permission storage permission = permissions[_findPermission(permissions, permissionId)];
 
         // Cleartext first: every reason to reject this call is knowable without touching a
-        // ciphertext, while `FHE.fromExternal` pays for coprocessor proof verification and three
+        // ciphertext, while importing one pays for coprocessor proof verification and three
         // ACL grants that a revert would only roll back. {_validateNewPermission} already
         // establishes this order on the creation path.
         bool gridChanged = _applyWindowUpdate(permission, duration, startTime, endTime);
 
         if (inputProof.length > 0) {
-            euint64 eLimit = FHE.fromExternal(limit, inputProof);
+            euint64 eLimit = FHESafe.fromExternal(limit, inputProof, msg.sender);
             permission.limit = eLimit;
             FHE.allowThis(eLimit);
             FHE.allow(eLimit, msg.sender);
@@ -427,7 +427,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bytes calldata inputProof,
         address token
     ) external nonReentrant returns (euint64 transferred) {
-        transferred = _spend(from, to, FHE.fromExternal(amount, inputProof), token);
+        transferred = _spend(from, to, FHESafe.fromExternal(amount, inputProof, msg.sender), token);
     }
 
     /**
@@ -441,7 +441,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            _spend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
+            _spend(t.from, t.to, FHESafe.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -457,8 +457,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         That reverts `InvalidReturnedHandle` and takes the whole batch with it — see
      *         {_isTokenAuthored} and the note at the call site for why this failure is escalated
      *         rather than skipped.
-     * @dev Malformed input proofs still revert the whole call (`FHE.fromExternal` is
-     *      not catchable), as does a `token` address with no code (the compiler's
+     * @dev Malformed input proofs still revert the whole call (the import is not
+     *      catchable), as does a `token` address with no code (the compiler's
      *      extcodesize check reverts outside try/catch) — both are the caller's own
      *      inputs to get right.
      *
@@ -478,7 +478,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         executed = new bool[](transfers.length);
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            executed[i] = _trySpend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
+            executed[i] = _trySpend(t.from, t.to, FHESafe.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -547,8 +547,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         externalEuint64 requested,
         bytes calldata requestedProof
     ) private returns (euint64) {
-        euint64 eCap = FHE.fromExternal(externalEuint64.wrap(capHandle), capProof);
-        euint64 eRequested = FHE.fromExternal(requested, requestedProof);
+        // The cap is the OWNER's, encrypted bound to the spender and submitted by them, and it is
+        // never granted onward — only `transferred` is. Importing through FHESafe keeps it that way:
+        // `FHE.fromExternal` would hand the spender transient access to the cap, which a CONTRACT
+        // spender can persist and decrypt, revealing how much room the cheque has left.
+        euint64 eCap = FHESafe.fromExternal(externalEuint64.wrap(capHandle), capProof, msg.sender);
+        euint64 eRequested = FHESafe.fromExternal(requested, requestedProof, msg.sender);
         return FHE.select(FHE.le(eRequested, eCap), eRequested, E_ZERO);
     }
 

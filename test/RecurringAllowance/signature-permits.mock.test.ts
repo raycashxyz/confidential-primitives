@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { getAddress, parseEventLogs, zeroAddress } from "viem";
 import type { Hex } from "viem";
 
-import { assertRevertsWith } from "../setup/asserts";
+import { assertRevertsWith, assertRevertsWithSelector, SENDER_NOT_ALLOWED } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
 import { DAY, useAllowanceSuite } from "./setup/suite";
 import type { PermitGrantMessage, PermitSpendMessage } from "./setup/suite";
 import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
+import { getOrDeployMockCapStealingSpender } from "../../src/deployers/MockCapStealingSpender";
 
 describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   const S = useAllowanceSuite();
@@ -164,6 +165,75 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
 
     // Carol's limit stayed hers: bob never received a handle he could decrypt.
     await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
+  });
+
+  // The cap is the owner's private ceiling for one cheque: never granted onward, so the spender
+  // learns only whether their request fit. FHE.fromExternal would have handed the submitter a
+  // transient grant on it, which a CONTRACT spender can persist and decrypt inside the same
+  // transaction. FHESafe keeps the grant on the allowance contract alone.
+  it("does not let a contract spender read the cheque cap", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { deployer, alice, carol } = H.wallets;
+
+    const { contract: thief } = await getOrDeployMockCapStealingSpender({
+      walletClient: deployer,
+      publicClient: H.publicClient,
+      store: H.store,
+      args: [allowance.address],
+      force: true,
+    });
+
+    await S.fundUser(alice, 10_000n);
+
+    // Owner signs a cheque naming the CONTRACT as spender; cap and request bind to it, not to an EOA.
+    const cheque = await makeCheque({
+      owner: "alice",
+      spender: thief.address,
+      cap: 500n
+    });
+    const requested = await S.encAmount(allowance.address, thief.address, 300n);
+    const call = [
+      alice.account.address,
+      cheque.permit,
+      cheque.capProof,
+      requested.handle,
+      requested.inputProof,
+      carol.account.address,
+      cheque.signature
+    ] as const;
+
+    const receipt = await S.sendOk(thief.write.spendAndReportSelfAccess(call, fheTxOpts(deployer.account)));
+    const [access] = parseEventLogs({
+      abi: thief.abi,
+      logs: receipt.logs,
+      eventName: "SpenderSelfAccess"
+    });
+    if (!access) throw new Error("no SpenderSelfAccess event");
+    expect(access.args.spenderAllowedOnCap).toBe(false);
+
+    // The cheque really did execute — the spend is not silently a no-op.
+    expect(await S.balanceOf(carol)).toBe(300n);
+
+    // And escalating that access reverts at the ACL. Fresh nonce: the first cheque burned nonce 0.
+    const second = await makeCheque({
+      owner: "alice",
+      spender: thief.address,
+      cap: 500n,
+      nonce: 1n
+    });
+    const requested2 = await S.encAmount(allowance.address, thief.address, 100n);
+    await assertRevertsWithSelector(
+      thief.write.spendThenPersistCap([
+        alice.account.address,
+        second.permit,
+        second.capProof,
+        requested2.handle,
+        requested2.inputProof,
+        carol.account.address,
+        second.signature
+      ], txOpts(deployer.account)),
+      SENDER_NOT_ALLOWED,
+    );
   });
 
   it("creates a permission gaslessly for the owner: sign off-chain, spender submits", async () => {
