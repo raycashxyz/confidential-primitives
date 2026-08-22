@@ -182,6 +182,39 @@ A denied spend costs exactly the same as a permitted one — same op sequence, s
 | Spend amounts | Encrypted `euint64` |
 | Whether a spend was permitted or denied | Hidden on-chain: identical writes and events either way; the recipient learns the outcome from their balance |
 
+## FHEUtils
+
+`contracts/fhe/FHEUtils.sol` is an **addition** to `@fhevm/solidity`, not a replacement — import both.
+It holds the pieces every contract that handles ciphertexts it did not create ends up needing, and
+that are easy to get silently wrong.
+
+**`fromExternal(handle, inputProof, user)`** — import a caller-supplied ciphertext, granting ACL
+access to *your contract only*. `FHE.fromExternal` also grants the **submitter** transient access. An
+EOA can't use that, but a contract caller — still running in the same transaction — promotes it with
+`FHE.allow` or publishes it with `FHE.makePubliclyDecryptable`, then decrypts a plaintext it was never
+meant to see. Passing the expected type to the coprocessor additionally closes `fromExternal`'s
+empty-proof branch, which returns a handle verbatim after only an ACL check and lets a caller land a
+wrong-typed handle in a typed slot. The proof binding is unchanged: `user` is still verified, so the
+ciphertext stays submittable only by the party it was issued to. Pass `msg.sender` unless you know
+why you shouldn't.
+
+**`isAuthoredBy(handle, author)`** — the check to run on any ciphertext an untrusted contract hands
+*back* to you. Handles are global rather than namespaced, so a hostile callee can return a handle
+belonging to someone else — one it read from a public getter. Fold that into your own state and grant
+the result onward, and you have laundered a third party's ciphertext into something your caller can
+decrypt. A contract is always authorized on a value it really computed and cannot grant itself access
+to one it didn't, which is what separates the two.
+
+**`sum(xs)`** — tree-reduce an array to one ciphertext. fhEVM meters *two* budgets per transaction:
+total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N
+adds, so it hits the depth cap long before the total one and caps N hard. Pairwise reduction keeps the
+critical path at `ceil(log2 N)`.
+
+> **Version coupling.** `fromExternal` depends on the *behaviour* of `FHEVMExecutor.verifyInput` —
+> that it grants ACL access to its own `msg.sender` and no one else — not just its signature. A
+> release changing that would break the guarantee with no compiler error, so `test/fhe-utils.mock.test.ts`
+> asserts it directly. Keep those green across dependency bumps rather than trusting a version pin.
+
 ## Install
 
 ```bash

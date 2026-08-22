@@ -17,7 +17,7 @@ import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
  *      contract is still executing in the same transaction when `permitTransferFrom` returns, so it
  *      could persist that access and decrypt the cap off-chain. The handle is no secret either — it
  *      is `permit.capHandle`, straight out of its own calldata. Importing through
- *      {FHESafe-fromExternal} means the grant never reaches it, so both attempts below revert
+ *      {FHEUtils-fromExternal} means the grant never reaches it, so both attempts below revert
  *      `SenderNotAllowed` at the ACL and {reportSelfAccess} is false.
  */
 contract MockCapStealingSpender is ZamaEthereumConfig {

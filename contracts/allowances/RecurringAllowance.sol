@@ -8,7 +8,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
-import {FHESafe} from "../fhe/FHESafe.sol";
+import {FHEUtils} from "../fhe/FHEUtils.sol";
 import {UnorderedNonces} from "./base/UnorderedNonces.sol";
 
 /**
@@ -196,7 +196,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     /**
      * @dev Import a permission's encrypted limit. Both creation paths route through here.
      *
-     *      {FHESafe-fromExternal} passes the expected `Uint64` to the coprocessor, so a handle of any
+     *      {FHEUtils-fromExternal} passes the expected `Uint64` to the coprocessor, so a handle of any
      *      other type reverts `InvalidType` before it can become `Permission.limit`. That matters
      *      because a non-`Uint64` limit makes every later `FHE.le` against it revert inside
      *      `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one poisoned payer
@@ -209,7 +209,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      */
     function _verifyLimit(externalEuint64 limit, bytes calldata inputProof) private returns (euint64) {
         if (inputProof.length == 0) revert MissingInputProof();
-        return FHESafe.fromExternal(limit, inputProof, msg.sender);
+        return FHEUtils.fromExternal(limit, inputProof, msg.sender);
     }
 
     /// @dev Cleartext half of permission creation, shared by {setPermission} and
@@ -327,7 +327,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bool gridChanged = _applyWindowUpdate(permission, duration, startTime, endTime);
 
         if (inputProof.length > 0) {
-            euint64 eLimit = FHESafe.fromExternal(limit, inputProof, msg.sender);
+            euint64 eLimit = FHEUtils.fromExternal(limit, inputProof, msg.sender);
             permission.limit = eLimit;
             FHE.allowThis(eLimit);
             FHE.allow(eLimit, msg.sender);
@@ -427,7 +427,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bytes calldata inputProof,
         address token
     ) external nonReentrant returns (euint64 transferred) {
-        transferred = _spend(from, to, FHESafe.fromExternal(amount, inputProof, msg.sender), token);
+        transferred = _spend(from, to, FHEUtils.fromExternal(amount, inputProof, msg.sender), token);
     }
 
     /**
@@ -441,7 +441,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            _spend(t.from, t.to, FHESafe.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
+            _spend(t.from, t.to, FHEUtils.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -478,7 +478,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         executed = new bool[](transfers.length);
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            executed[i] = _trySpend(t.from, t.to, FHESafe.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
+            executed[i] = _trySpend(t.from, t.to, FHEUtils.fromExternal(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -548,11 +548,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bytes calldata requestedProof
     ) private returns (euint64) {
         // The cap is the OWNER's, encrypted bound to the spender and submitted by them, and it is
-        // never granted onward — only `transferred` is. Importing through FHESafe keeps it that way:
+        // never granted onward — only `transferred` is. Importing through FHEUtils keeps it that way:
         // `FHE.fromExternal` would hand the spender transient access to the cap, which a CONTRACT
         // spender can persist and decrypt, revealing how much room the cheque has left.
-        euint64 eCap = FHESafe.fromExternal(externalEuint64.wrap(capHandle), capProof, msg.sender);
-        euint64 eRequested = FHESafe.fromExternal(requested, requestedProof, msg.sender);
+        euint64 eCap = FHEUtils.fromExternal(externalEuint64.wrap(capHandle), capProof, msg.sender);
+        euint64 eRequested = FHEUtils.fromExternal(requested, requestedProof, msg.sender);
         return FHE.select(FHE.le(eRequested, eCap), eRequested, E_ZERO);
     }
 
@@ -834,29 +834,26 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Could `token` have computed `handle`? Ciphertext handles are global, not namespaced per
-     *      token, and `token` is a caller-supplied address — so without this check a malicious token
-     *      can return ANY handle in place of a transfer result.
+     * @dev Could `token` have computed `handle`? {FHEUtils-isAuthoredBy} is the general check and
+     *      explains the mechanism; what follows is why THIS contract cannot skip it.
      *
-     *      That is not a theoretical substitution. This contract calls `FHE.allowThis` on every
-     *      user's `limit` and `spent`, so it is permanently authorized on all of them, and those
-     *      handles are public (returned by {getPermission}, emitted in {PermissionSet}). An attacker
-     *      registers a permission on a token they wrote, has it return a victim's `limit` handle,
-     *      and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)` — which passes, because WE
-     *      are allowed on both — then grants the sum to the attacker, who knows their own `spent`
-     *      and subtracts it. {permitTransferFrom} is more direct still: it forwards the returned
-     *      handle straight to `msg.sender` via `allowTransient`, which a contract caller persists.
+     *      `token` is a caller-supplied address, and this contract calls `FHE.allowThis` on every
+     *      user's `limit` and `spent`, so it is permanently authorized on all of them — and those
+     *      handles are public, returned by {getPermission} and emitted in {PermissionSet}. An
+     *      attacker registers a permission on a token they wrote, has it return a victim's `limit`
+     *      handle, and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)` — which passes,
+     *      because WE are allowed on both — then grants the sum to the attacker, who knows their own
+     *      `spent` and subtracts it. {permitTransferFrom} is more direct still: it forwards the
+     *      returned handle straight to `msg.sender` via `allowTransient`, which a contract caller
+     *      persists.
      *
-     *      An honestly-computed result is always authorized to its own token: OZ's `ERC7984._update`
-     *      ends with `FHE.allowThis(transferred)`. A third party's ciphertext is not. (OZ applies the
-     *      mirror image of this check to amounts callers hand IN — `ERC7984UnauthorizedUseOfEncryptedAmount`.)
-     *
-     *      Uninitialized is rejected too: an uninitialized handle would revert inside `_recordSpend`'s
-     *      `FHE.add` anyway, and that revert sits in the lenient path's success branch where it would
-     *      take the whole batch down instead of skipping one item.
+     *      Uninitialized is rejected for a second reason here: such a handle would revert inside
+     *      `_recordSpend`'s `FHE.add` anyway, and that revert sits in the lenient path's success
+     *      branch, where it would surface as an uncontrolled failure rather than the deliberate
+     *      escalation at the call site.
      */
     function _isTokenAuthored(address token, euint64 handle) private view returns (bool) {
-        return FHE.isInitialized(handle) && FHE.isAllowed(handle, token);
+        return FHEUtils.isAuthoredBy(handle, token);
     }
 
     /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271). Binds `owner` and

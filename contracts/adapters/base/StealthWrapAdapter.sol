@@ -8,7 +8,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
-import {FHESafe} from "../../fhe/FHESafe.sol";
+import {FHEUtils} from "../../fhe/FHEUtils.sol";
 
 /**
  * @title StealthWrapAdapter
@@ -198,7 +198,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *      fix, so this is `private`: it must not be bypassable or overridable.
      *
      *      The mechanism, and why `FHE.fromExternal` cannot be used here, are documented on
-     *      {FHESafe}. In short: `fromExternal` adds a second ACL grant naming the DEPOSITOR, which a
+     *      {FHEUtils}. In short: `fromExternal` adds a second ACL grant naming the DEPOSITOR, which a
      *      contract depositor can promote to permanent access before the transaction ends. The
      *      proof binding is unchanged either way — it still names the depositor, which is what stops
      *      a third party submitting the handle — so only the leak goes away.
@@ -206,7 +206,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *      The caller then persists the adapter's access with `FHE.allowThis`.
      */
     function _importRecipient(externalEaddress eRecipient, bytes calldata inputProof) private returns (eaddress) {
-        return FHESafe.fromExternal(eRecipient, inputProof, msg.sender);
+        return FHEUtils.fromExternal(eRecipient, inputProof, msg.sender);
     }
 
     /**
@@ -318,25 +318,12 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allowThis(transferred);
     }
 
-    /**
-     * @dev Reduce `xs` to a single encrypted sum with a pairwise binary-tree reduction.
-     *      This keeps FHE dependency depth at O(log N), unlike a serial accumulator.
-     */
+    /// @dev Tree-reduce `xs` to a single encrypted sum — see {FHEUtils-sum} for why the shape
+    ///      matters. `virtual` so a derived adapter can substitute its own reduction; overrides must
+    ///      keep the FHE dependency depth sub-linear or finalize will hit the per-transaction depth
+    ///      budget as the scan grows.
     function _sumTree(euint64[] memory xs) internal virtual returns (euint64) {
-        uint256 n = xs.length;
-        if (n == 0) return E_ZERO;
-
-        while (n > 1) {
-            uint256 half = (n + 1) >> 1;
-            for (uint256 i = 0; i < half; i++) {
-                uint256 l = i << 1;
-                uint256 r = l + 1;
-                xs[i] = r < n ? FHE.add(xs[l], xs[r]) : xs[l];
-            }
-            n = half;
-        }
-
-        return xs[0];
+        return FHEUtils.sum(xs);
     }
 
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual;

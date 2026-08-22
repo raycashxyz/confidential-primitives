@@ -170,7 +170,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   // The cap is the owner's private ceiling for one cheque: never granted onward, so the spender
   // learns only whether their request fit. FHE.fromExternal would have handed the submitter a
   // transient grant on it, which a CONTRACT spender can persist and decrypt inside the same
-  // transaction. FHESafe keeps the grant on the allowance contract alone.
+  // transaction. FHEUtils keeps the grant on the allowance contract alone.
   it("does not let a contract spender read the cheque cap", async () => {
     const { H, token, allowance } = S.ctx();
     const { deployer, alice, carol } = H.wallets;

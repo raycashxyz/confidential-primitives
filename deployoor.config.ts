@@ -5,6 +5,6 @@ export default defineConfig({
   out: "./src/deployers",
   deploymentsPath: "./deployments",
   // Only the deployable, non-abstract contracts (the base + interface can't be deployed).
-  include: /^(MockUSDC|MockERC7984ERC20Wrapper|MockConfidentialToken|MockHandleStealingToken|Mock1271Wallet|MockBatchedStealthWrapAdapterExtension|MockTransientAmountAdapter|MockCapStealingSpender|MockReusableHandleAdapter|MockRecipientStealingDepositor|MockSoftFailingWrapper|ContinuousStealthWrapAdapter|BatchedStealthWrapAdapter|RecurringAllowance)$/,
+  include: /^(MockUSDC|MockERC7984ERC20Wrapper|MockConfidentialToken|MockHandleStealingToken|Mock1271Wallet|MockBatchedStealthWrapAdapterExtension|MockTransientAmountAdapter|MockCapStealingSpender|MockFHEUtilsHarness|MockReusableHandleAdapter|MockRecipientStealingDepositor|MockSoftFailingWrapper|ContinuousStealthWrapAdapter|BatchedStealthWrapAdapter|RecurringAllowance)$/,
   plugins: [],
 });
