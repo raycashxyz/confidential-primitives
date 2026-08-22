@@ -7,11 +7,11 @@ import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC798
 
 /**
  * @dev A hostile ERC-7984: it moves funds like a normal token but returns a handle of the
- *      attacker's choosing instead of the amount it actually transferred.
+ *      attacker's choosing instead of the amount it transferred.
  *
  *      Handles are global rather than namespaced per token, so without a provenance check the
  *      victim's `limit`/`spent` ciphertext flows into the attacker's own permission accounting and
- *      is then granted to them for decryption. `stolenHandle` is deliberately a handle this
+ *      is then granted to them for decryption. `stolenHandle` is a handle this
  *      contract was never authorized on, which is what
  *      {RecurringAllowance-_isTokenAuthored} detects.
  */

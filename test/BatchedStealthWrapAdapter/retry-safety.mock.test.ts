@@ -2,8 +2,8 @@
  * BatchedStealthWrapAdapter: finalize is retry-safe against a soft-failing wrapper (issue #34).
  *
  * The batched adapter replaced its cleartext (batch, recipient) nullifier with an encrypted
- * `claimed` accumulator: finalize pays `matched - claimed` and credits back only what the wrapper
- * reports it actually moved. So a transfer that soft-fails to zero (freeze / pause / blacklist) or
+ * `claimed` accumulator. Finalize pays `matched - claimed` and credits back only what the wrapper
+ * reports it moved. So a transfer that soft-fails to zero, as on a freeze, pause or blacklist, or
  * moves only part leaves the remainder claimable, and no sequence can pay a recipient more than
  * their matched sum. These tests drive a wrapper that soft-fails on command and assert exactly that.
  */
@@ -110,7 +110,7 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
     ], fheTxOpts(depositor.account)));
   };
 
-  // Explicit gas: tevm under-estimates for a plain write issued right after an FHE-heavy tx, which
+  // Explicit gas, because tevm under-estimates for a plain write issued right after an FHE-heavy tx, which
   // otherwise reverts this toggle and silently leaves the wrapper in its previous mode.
   const setMode = (mode: number, partial: bigint) =>
     send(wrapper.write.setFailMode([mode, partial], { ...txOpts(H.wallets.deployer.account), gas: 200_000n }));
@@ -124,8 +124,8 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
   const finalize = (adapter: Adapter, ids: bigint[], recipient: `0x${string}`, caller: WalletWithAccount) =>
     send(adapter.write.finalizeWrap([ids, recipient], { ...txOpts(caller.account), gas: finalizeGas }));
 
-  // A blocked transfer (freeze / pause / blacklist returns encrypted zero) must not consume the
-  // claim: the recipient retries once the block lifts and is made whole.
+  // A blocked transfer, where a freeze, pause or blacklist returns an encrypted zero, must not consume
+  // the claim. The recipient retries once the block lifts and is made whole.
   it("retries a finalize the wrapper blocked entirely", async () => {
     const { alice } = H.wallets;
     const adapter = await deployAdapter(2n);
@@ -159,7 +159,7 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
     expect(await balanceOf(alice)).toBe(AMOUNT * 2n); // remainder delivered, total = matched
   });
 
-  // The invariant that matters: no sequence of soft-fails can pay a recipient more than their
+  // The invariant that matters is that no sequence of soft-fails can pay a recipient more than their
   // matched sum. Hammer partial finalizes and confirm it converges to matched, never past it.
   it("never pays more than the matched sum under repeated partials", async () => {
     const { alice } = H.wallets;
@@ -178,12 +178,12 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
 
   // A wrapper that lies UPWARD about how much it moved must not overpay or brick the batch.
   //
-  // NOTE this does not isolate the `FHE.min` clamp in `_creditedAmount`: without it `claimed` would
+  // NOTE this does not isolate the `FHE.min` clamp in `_creditedAmount`. Without it `claimed` would
   // exceed `matched` and the next `matched - claimed` would wrap near 2^64, but OZ soft-fails that
-  // oversized transfer to zero (escrow is nowhere near 2^64), so the balances below look the same
+  // oversized transfer to zero, since escrow is nowhere near 2^64, so the balances below look the same
   // either way. The clamp is there to keep `claimed <= matched` structurally true, which is what
   // `claimedAmount` reports and what an exact-or-revert wrapper would otherwise revert on forever.
-  // What this test does pin is the user-visible guarantee: a lying wrapper cannot extract more than
+  // What this test does pin is the user-visible guarantee, that a lying wrapper cannot extract more than
   // the matched sum, and the batch stays usable afterwards.
   it("does not overpay or brick the batch when the wrapper over-reports", async () => {
     const { alice } = H.wallets;
@@ -197,13 +197,13 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
     await finalize(adapter, [0n], alice.account.address, alice);
     expect(await balanceOf(alice)).toBe(AMOUNT * 2n); // paid exactly matched, not the inflated figure
 
-    // The batch is still usable and pays nothing further: the lie bought the wrapper no extra escrow.
+    // The batch is still usable and pays nothing further. The lie bought the wrapper no extra escrow.
     await setMode(NORMAL, 0n);
     await finalize(adapter, [0n], alice.account.address, alice);
     expect(await balanceOf(alice)).toBe(AMOUNT * 2n);
   });
 
-  // A replay of a fully-claimed batch is a no-op: it pays an encrypted zero, does not revert, and
+  // A replay of a fully-claimed batch is a no-op. It pays an encrypted zero, does not revert, and
   // does not double-pay.
   it("does not double-pay a fully claimed batch on replay", async () => {
     const { alice, bob } = H.wallets;

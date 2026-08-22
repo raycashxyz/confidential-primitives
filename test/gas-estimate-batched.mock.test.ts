@@ -232,7 +232,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     console.log("  └────────┴─────────────────┴─────────────────┘\n");
 
     // Continuous used to drop out above 32 because it trivially encrypted the public recipient and
-    // took the ciphertext-ciphertext eq; on the scalar overload it clears every measured size.
+    // took the ciphertext-ciphertext eq. On the scalar overload it clears every measured size.
     for (const r of results) {
       expect(r.continuousFinalize, `continuous finalize gas @${r.n}`).not.toBeNull();
       expect(r.batchedFinalize, `batched finalize gas @${r.n}`).not.toBeNull();

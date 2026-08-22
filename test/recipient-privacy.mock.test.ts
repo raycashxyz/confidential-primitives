@@ -3,18 +3,18 @@
  *
  * The recipient handshake hides the recipient from chain observers. It must also hide it from the
  * depositor, including a CONTRACT depositor, which unlike an EOA can act again in the same
- * transaction. The leak the fix closes: `FHE.fromExternal` grants the depositor (msg.sender)
+ * transaction. The leak the fix closes is that `FHE.fromExternal` grants the depositor (msg.sender)
  * transient ACL access to the verified recipient ciphertext, and a contract can promote that grant
  * to a persistent `FHE.allow` or a public `FHE.makePubliclyDecryptable` before the transaction ends,
  * then decrypt the recipient off-chain.
  *
- * {StealthWrapAdapter._importRecipient} imports the ciphertext through the coprocessor's
- * `verifyInput` directly, so the only ACL grant goes to the adapter, never to the depositor. These
+ * {StealthWrapAdapter._importRecipient} imports the ciphertext through `FHEUtils.fromExternal`,
+ * which calls the coprocessor's `verifyInput` directly, so the only ACL grant goes to the adapter, never to the depositor. These
  * tests drive the exact attack from a malicious contract depositor and assert it gets nothing:
  *   - the depositor is NOT allowed on the recipient handle right after depositing, and
  *   - both escalation calls revert `SenderNotAllowed` at the ACL,
- * while a normal deposit by that same contract still succeeds (the depositor-bound proof of #9 is
- * unchanged: a contract can deposit; it just cannot read the recipient).
+ * while a normal deposit by that same contract still succeeds. The depositor-bound proof of #9 is
+ * unchanged, so a contract can deposit, it just cannot read the recipient.
  */
 import {
   beforeAll, beforeEach, describe, expect, it
@@ -107,7 +107,7 @@ describe("recipient privacy against the depositor (#36)", () => {
   };
 
   // Deploy an attacker contract pointed at `adapterAddress`, fund it with underlying, and encrypt a
-  // recipient bound to (adapter, attacker): the attacker is the depositor, so it is `userAddress`.
+  // recipient bound to (adapter, attacker), since the attacker is the depositor, so it is `userAddress`.
   const setupAttack = async (adapterAddress: Hex, recipient: Hex) => {
     const { contract: attacker } = await getOrDeployMockRecipientStealingDepositor({
       walletClient: H.wallets.deployer,
@@ -161,8 +161,8 @@ describe("recipient privacy against the depositor (#36)", () => {
       const adapterAddress = await deploy();
       const { attacker, handle, inputProof } = await setupAttack(adapterAddress, recipient);
 
-      // The deposit succeeds (a contract depositor's proof still works), but the depositor holds no
-      // ACL access to the stored recipient handle: nothing it could escalate or decrypt.
+      // The deposit succeeds, since a contract depositor's proof still works, but the depositor holds no
+      // ACL access to the stored recipient handle, nothing it could escalate or decrypt.
       expect(await selfAccessAfterDeposit(attacker, handle, inputProof)).toBe(false);
     });
 

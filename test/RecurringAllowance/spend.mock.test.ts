@@ -12,7 +12,7 @@ describe("RecurringAllowance: spending", () => {
   const S = useAllowanceSuite();
 
   /**
-   * Stand up a hostile token with a working permission behind it: the attacker holds a balance,
+   * Stand up a hostile token with a working permission behind it. The attacker holds a balance,
    * has made the allowance an operator, and has granted themselves a permission on it. The token
    * still behaves honestly until `setStolenHandle` arms it.
    */
@@ -43,7 +43,7 @@ describe("RecurringAllowance: spending", () => {
   };
 
   // Handles are global, not namespaced per token, and `token` is caller-supplied. This contract is
-  // permanently ACL-allowed on every user's limit/spent (it calls allowThis on them) and those
+  // permanently ACL-allowed on every user's limit/spent, since it calls allowThis on them, and those
   // handles are public, so a token that returns someone else's handle would have it added into the
   // attacker's own `spent` and then granted to the attacker to decrypt.
   it("rejects a token-returned handle the token itself is not authorized on", async () => {
@@ -60,7 +60,7 @@ describe("RecurringAllowance: spending", () => {
 
     const evil = await armHostileToken();
 
-    // Same setup, still honest: proves the revert below is the substitution and not a broken fixture.
+    // Same setup, still honest. It proves the revert below is the substitution and not a broken fixture.
     await S.spend({
       spender: bob,
       from: bob.account.address,
@@ -83,13 +83,13 @@ describe("RecurringAllowance: spending", () => {
       "InvalidReturnedHandle",
     );
 
-    // The victim's limit stayed hers: bob never got a handle he could decrypt.
+    // The victim's limit stayed hers. Bob never got a handle he could decrypt.
     await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
   });
 
-  // Unlike every other lenient-path failure, an unauthorized return handle is escalated: it is
+  // Unlike every other lenient-path failure, an unauthorized return handle is escalated. It is
   // positive evidence the token is hostile, so the whole batch reverts rather than settling the
-  // honest items alongside it. The honest item here proves the batch really is taken down.
+  // honest items alongside it. The honest item here proves the batch is taken down.
   it("reverts the whole tryTransferFrom batch on a stolen return handle", async () => {
     const { H, allowance, token } = S.ctx();
     const { alice, bob, carol } = H.wallets;
@@ -245,7 +245,7 @@ describe("RecurringAllowance: spending", () => {
     expect(await S.balanceOf(carol)).toBe(0n);
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(0n); // nothing consumed
 
-    // After topping up, the same pull succeeds: the failed attempt did not burn budget.
+    // After topping up, the same pull succeeds. The failed attempt did not burn budget.
     await S.mintTo(alice, 200n);
     await S.spend({
       spender: bob,
@@ -282,7 +282,7 @@ describe("RecurringAllowance: spending", () => {
     });
     await assertRevertsWith(attempt(), "NoPermissions");
 
-    // expired (warp past endTime; the future one from above still hasn't started)
+    // expired, by warping past endTime, while the future one from above still hasn't started
     await S.setPermission({
       user: alice,
       spender: bob.account.address,

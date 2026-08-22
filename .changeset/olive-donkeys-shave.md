@@ -16,10 +16,10 @@ honestly computed result always is (`ERC7984._update` ends with `FHE.allowThis(t
 check is `FHEUtils.isAuthoredBy`.
 
 `tryTransferFrom` reverts here too, rather than skipping the item. Every other lenient-path failure
-is a cleartext precondition the caller can fix (no permission window, no operator grant) and skipping
-those is the point of the function. An unauthorized return handle is different in kind: no conforming
+is a cleartext precondition the caller can fix, such as no permission window or no operator grant, and skipping
+those is the point of the function. An unauthorized return handle is different in kind. No conforming
 ERC-7984 can produce one, so it is evidence the counterparty is hostile, and `token` is supplied per
 item by the caller, so skipping would settle unrelated payers in the same transaction as a contract
 already caught lying about its return value. Reverting also unwinds the transfer that call had
 already made, which a skip could not. The trade is that one hostile token takes the honest items in
-its batch with it: screen tokens before batching, or submit suspect ones in their own call.
+its batch with it. Screen tokens before batching, or submit suspect ones in their own call.

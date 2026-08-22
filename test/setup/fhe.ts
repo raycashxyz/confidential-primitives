@@ -1,7 +1,7 @@
 /**
  * Minimal FHEVM encrypt/decrypt helpers over a fhevm-tevm-mocks instance.
  *
- * Standalone replacement for the encrypt/decrypt utilities used by the private harness: no
+ * Standalone replacement for the encrypt/decrypt utilities used by the private harness, with no
  * relayer-SDK production path, just the test-instance calls the adapters need.
  */
 import {
@@ -27,7 +27,7 @@ interface Eip712 {
   };
 }
 
-/** The subset of the fhevm-tevm-mocks instance surface these helpers use. */
+/** The subset of the fhevm-tevm-mocks instance these helpers use. */
 export interface FhevmInstance {
   createEncryptedInput: (contract: string, user: string) => EncryptedInput;
   generateKeypair: () => { publicKey: string; privateKey: string };
@@ -95,8 +95,8 @@ export async function encryptRecipient (
 }
 
 /**
- * Decrypt an euint handle for `owner` via the full userDecrypt flow (fresh keypair authorized by
- * an EIP-712 signature). The tevm mock relayer verifies that signature strictly.
+ * Decrypt an euint handle for `owner` via the full userDecrypt flow, with a fresh keypair authorized by
+ * an EIP-712 signature. The tevm mock relayer verifies that signature strictly.
  */
 export async function decryptEuint (
   instance: FhevmInstance,
@@ -115,7 +115,7 @@ export async function decryptEuint (
     domain: eip712.domain,
     types,
     primaryType: eip712.primaryType,
-    // The mock encodes the uint256 fields as strings; viem's typed signer wants bigint.
+    // The mock encodes the uint256 fields as strings. viem's typed signer wants bigint.
     message: {
       ...eip712.message,
       startTimestamp: BigInt(eip712.message.startTimestamp),

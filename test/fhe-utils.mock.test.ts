@@ -1,9 +1,9 @@
 /**
  * FHEUtils, tested directly rather than through the contracts that use it.
  *
- * The ACL containment rests on the BEHAVIOUR of `FHEVMExecutor.verifyInput` (that it grants access
- * to its own `msg.sender` and to nobody else), not on its signature, so a dependency bump could
- * break it silently, with no compiler error. These assertions are the guard: if they fail after an
+ * The ACL containment rests on the BEHAVIOUR of `FHEVMExecutor.verifyInput`, namely that it grants access
+ * to its own `msg.sender` and to nobody else, not on its signature, so a dependency bump could
+ * break it silently, with no compiler error. These assertions are the guard. If they fail after an
  * `@fhevm/solidity` upgrade, the import no longer contains the grant and every consumer is affected.
  */
 import {
@@ -90,7 +90,7 @@ describe("FHEUtils", () => {
 
     // The expected type is passed to the coprocessor rather than inferred from the overload, so a
     // wrong-typed handle cannot reach a typed slot. That is what makes `FHE.fromExternal`'s
-    // empty-proof branch unreachable rather than merely gated.
+    // empty-proof branch unreachable rather than only gated.
     it("rejects a handle whose type does not match the overload", async () => {
       const { contract, alice, fhevm } = await boot();
       const { handle, inputProof } = await encryptRecipient(
@@ -104,7 +104,7 @@ describe("FHEUtils", () => {
   });
 
   describe("isAuthoredBy", () => {
-    // The laundering shape: a handle some OTHER contract is authorized on, returned by a callee that
+    // The laundering shape is a handle some OTHER contract is authorized on, returned by a callee that
     // is not. The check must separate the two even though both handles are real, initialized and
     // allowed to somebody.
     it("is true for a handle the contract computed, false for one only another contract holds", async () => {
@@ -130,7 +130,7 @@ describe("FHEUtils", () => {
       expect(await other.read.authoredHere([theirs])).toBe(true);
       expect(await contract.read.authoredHere([theirs])).toBe(false);
 
-      // And a handle nobody on-chain is allowed on: a client-side encryption never imported.
+      // And a handle nobody on-chain is allowed on, a client-side encryption never imported.
       const [foreign] = await encryptValues(
         fhevm.instance, [{
           type: "add64",

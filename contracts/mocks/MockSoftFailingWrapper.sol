@@ -6,20 +6,20 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {MockERC7984ERC20Wrapper} from "./MockERC7984ERC20Wrapper.sol";
 
 /**
- * @dev A wrapper that can be told to SOFT-FAIL a transfer (move less than requested while the
- *      transaction still succeeds), which is the ERC-7984 behavior issue #34 is about (a freeze,
- *      pause, blacklist, or hook veto returns an encrypted zero or partial instead of reverting).
+ * @dev A wrapper that can be told to SOFT-FAIL a transfer, moving less than requested while the
+ *      transaction still succeeds. That is the ERC-7984 behavior issue #34 is about, where a freeze,
+ *      pause, blacklist or hook veto returns an encrypted zero or partial instead of reverting.
  *      OpenZeppelin's own `confidentialTransfer` is already exact-or-zero via `FHESafeMath`, so this
  *      only makes that reducible on demand for the retry-safety regression tests.
  *
  *      The reduction is applied in `_update`, the single mover behind wrap/unwrap/transfer. Tests set
  *      the mode AFTER depositing, so only the finalize transfer is affected:
  *        - mode 0: normal (exact).
- *        - mode 1: block; moves an encrypted zero (freeze / pause / blacklist).
- *        - mode 2: partial; moves `min(requested, partialAmount)`, so it never moves more than
+ *        - mode 1, block: moves an encrypted zero, as on a freeze, pause or blacklist.
+ *        - mode 2, partial: moves `min(requested, partialAmount)`, so it never moves more than
  *          asked, exactly like a real soft-failing transfer.
- *        - mode 3: over-report; moves the correct amount but RETURNS `moved + partialAmount`. No
- *          honest wrapper does this; it exists to pin {BatchedStealthWrapAdapter}'s clamp, which
+ *        - mode 3, over-report: moves the correct amount but RETURNS `moved + partialAmount`. No
+ *          honest wrapper does this. It exists to pin {BatchedStealthWrapAdapter}'s clamp, which
  *          keeps `claimed <= matched` from depending on the wrapper's return value being truthful.
  */
 contract MockSoftFailingWrapper is MockERC7984ERC20Wrapper {
@@ -42,7 +42,7 @@ contract MockSoftFailingWrapper is MockERC7984ERC20Wrapper {
             return super._update(from, to, zero);
         }
         if (failMode == 2) {
-            // min(requested, partialAmount): a soft-fail never moves MORE than asked.
+            // min(requested, partialAmount), since a soft-fail never moves MORE than asked.
             euint64 cap = FHE.asEuint64(partialAmount);
             ebool within = FHE.le(amount, cap);
             euint64 capped = FHE.select(within, amount, cap);

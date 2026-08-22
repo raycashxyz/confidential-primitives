@@ -12,28 +12,28 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  * @notice Batch-based stealth wrap adapter with a per-(batch, recipient) encrypted claimed
  *         accumulator and a tree-reduced payout sum.
  *
- *         Same privacy model as the other adapters: a deposit is SENDER-TRANSPARENT
+ *         Same privacy model as the other adapters. A deposit is SENDER-TRANSPARENT
  *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
  *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
- *         the transferred sum stays encrypted: observers learn only "R finalized batch B".
+ *         the transferred sum stays encrypted, so observers learn only "R finalized batch B".
  *
  *         The batch hides a deposit only
  *         among slots the adversary cannot rule out. Someone who deposited into the same batch
  *         knows their own encrypted recipients, so they subtract those slots and what remains is
- *         the real anonymity set; own enough of a batch and it collapses to one. With
+ *         the real anonymity set. Own enough of a batch and it collapses to one. With
  *         `maxBatchDeposits` capped at 48 that is cheap to attempt, and {initWrapInto} only closes
  *         the displacement half of it. This is inherent to any fixed-size set an adversary can pay
  *         to fill. The mitigation is client-side, and it is practical here because
- *         deposits are sender-transparent: inspect who is already in a batch, pin it, and judge
+ *         deposits are sender-transparent. Inspect who is already in a batch, pin it, and judge
  *         whether the crowd is real.
  *
  *         REPLAY GUARD: AN ENCRYPTED PER-RECIPIENT LEDGER. Each batch tracks, per recipient, an
  *         encrypted `claimed` total; {finalizeWrap} pays `matched - claimed` and credits back only
- *         what the wrapper reports it actually moved. So `claimed` can never exceed a recipient's
+ *         what the wrapper reports it moved. So `claimed` can never exceed a recipient's
  *         matched sum (no double-spend), and a soft-failed or partial transfer leaves the remainder
  *         claimable instead of destroying it, which is what lets the finalize path tolerate a
- *         soft-failing wrapper (the continuous adapter, which consumes deposits by zeroing them,
- *         still needs exact-or-revert; see its docs). A redundant finalize of a fully-claimed batch does not revert: it
+ *         soft-failing wrapper. The continuous adapter, which consumes deposits by zeroing them,
+ *         still needs exact-or-revert, see its docs. A redundant finalize of a fully-claimed batch does not revert. It
  *         pays an encrypted zero. That is log noise, throttled by having to pay for the scan, and
  *         the amount was opaque either way.
  *
@@ -41,33 +41,33 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
  *         FHEVM total-HCU budget rather than a long serial add chain.
  *
- *         A batch must be CLOSED (full, or timeout-sealed via {sealBatch}) before finalizing, which
- *         freezes each recipient's matched set (no later top-ups into a finalized batch); that is
- *         what makes `matched` stable enough to recompute on every retry. Tail batches can close only
- *         after `sealDelay`: either explicitly via {sealBatch} or automatically on the first
+ *         A batch must be CLOSED, either full or timeout-sealed via {sealBatch}, before finalizing.
+ *         That freezes each recipient's matched set, since no later top-up can land in a finalized
+ *         batch, and is what makes `matched` stable enough to recompute on every retry. Tail batches
+ *         can close only after `sealDelay`, either via {sealBatch} or automatically on the first
  *         {finalizeWrap} attempt, so funds cannot stay stuck without allowing premature one-deposit
  *         batches.
  *
- *         Recipient handshake (how the recipient stays hidden FROM THE CHAIN): the
+ *         Recipient handshake, which is how the recipient stays hidden FROM THE CHAIN. The
  *         RECIPIENT encrypts their own address off-chain with the input proof bound to
  *         the DEPOSITOR as userAddress, and hands (handle, proof) to the depositor,
  *         who submits it via {initWrap}. The recipient recognises their deposit by
  *         watching for their handle in {WrapInitiated}. See the DEPOSITOR TRUST note on
  *         {StealthWrapAdapter} for what this does NOT hide.
  *
- *         Like the other adapters: deposits are wrapped immediately into confidential
+ *         Like the other adapters, deposits are wrapped immediately into confidential
  *         balance owned by this contract, then transferred to recipients on finalize.
  */
 contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on batch size, set so {finalizeWrap} over ONE batch is PROVABLY
     ///      completable, since an unfinalizable batch would lock funds. finalize does a
     ///      fixed amount of FHE work per slot (`eq` + `select` + tree `add`), so its
-    ///      binding limit is the FHEVM 20M TOTAL-HCU/tx budget: measured on the FHEVM
-    ///      coprocessor mocks (which meter HCU via the HCULimit host contract),
-    ///      56 slots fits and >=60 reverts; the analytic op-cost model agrees (~60).
+    ///      binding limit is the FHEVM 20M TOTAL-HCU/tx budget. Measured on the FHEVM
+    ///      coprocessor mocks, which meter HCU via the HCULimit host contract,
+    ///      56 slots fits and >=60 reverts, and the analytic op-cost model agrees (~60).
     ///      48 leaves ~15-20% headroom.
     ///      NOTE the budget applies to TOTAL SLOTS SCANNED PER CALL: near the cap,
-    ///      finalize one batch per call; multi-batch calls suit smaller batch sizes.
+    ///      finalize one batch per call. Multi-batch calls suit smaller batch sizes.
     ///
     ///      THAT HEADROOM COVERS THE ADAPTER'S OWN WORK ONLY. `_transferWrapped` calls into the
     ///      configured wrapper, and whatever its `_update` costs comes out of the SAME
@@ -76,10 +76,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     ///      millions of HCU for hook aggregation and pre/post-transfer work, which is enough to
     ///      push a full 48-slot scan over the limit.
     ///
-    ///      Worse, that cost is not fixed at deployment: a hooked wrapper's admin can
+    ///      Worse, that cost is not fixed at deployment. A hooked wrapper's admin can
     ///      `installModule` AFTER deposits are already escrowed, so a batch calibrated against a
     ///      clean wrapper can become unfinalizable later. `initWrap` keeps succeeding either way,
-    ///      and finalize scans a batch whole (`matched` is recomputed over every slot in it), so a
+    ///      and finalize scans a batch whole, since `matched` is recomputed over every slot in it, so a
     ///      batch cannot be scanned in parts to get under the budget. The continuous adapter has the
     ///      same exposure through `minDecoys`, which is
     ///      immutable and cannot be lowered in response.
@@ -93,7 +93,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     /// @notice Seconds after a batch's FIRST deposit before anyone may {sealBatch} it.
     /// @dev Anchored to the first deposit, not the last. A sliding timer measured from the last
-    ///      deposit is resettable by anyone: while the batch still has free slots, a depositor can
+    ///      deposit is resettable by anyone. While the batch still has free slots, a depositor can
     ///      submit the minimum wrappable amount just before the delay expires and push the deadline
     ///      out again, repeating for every remaining slot, which stretches the worst-case wait to about
     ///      `(maxBatchDeposits - fillCount) * sealDelay`. Worse, {finalizeWrap} takes the cleartext
@@ -110,7 +110,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @notice Batch currently accepting deposits.
     uint256 public currentBatchId;
 
-    /// @notice Total deposits recorded across all batches. This is the COUNT; use
+    /// @notice Total deposits recorded across all batches. This is the COUNT. Use
     ///         {getDepositsLength} to enumerate, since slot indices are sparse.
     uint256 public totalDeposits;
 
@@ -124,12 +124,12 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         bool closed;
         /// @dev Anchor for the seal deadline. Set once, by the batch's first deposit.
         uint64 firstDepositAt;
-        /// @dev Informational only (batch activity for indexers); the seal deadline does not
-        ///      depend on it; see {sealDelay}. Packs into the same slot as the two fields above.
+        /// @dev Informational only, for indexers tracking batch activity. The seal deadline does not
+        ///      depend on it, see {sealDelay}. Packs into the same slot as the two fields above.
         uint64 lastDepositAt;
         /// @dev Encrypted running total ALREADY delivered to each recipient from this batch. This is
         ///      the replay guard AND the retry ledger: {finalizeWrap} pays `matched - claimed` and
-        ///      credits back what the wrapper reports actually moved, so a soft-failed or partial
+        ///      credits back what the wrapper reports moved, so a soft-failed or partial
         ///      transfer leaves the shortfall claimable rather than destroying it. See {finalizeWrap}.
         mapping(address recipient => euint64) claimed;
     }
@@ -167,9 +167,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         StealthWrapAdapter(confidentialWrapper_)
     {
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
-        // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could
+        // sealBatch's griefer-resistance IS the delay. With sealDelay = 0 anyone could
         // seal every batch at fill count 1, collapsing the anonymity set to a single
-        // deposit. Zero is rejected; choosing a meaningfully large delay (hours) is
+        // deposit. Zero is rejected. Choosing a meaningfully large delay (hours) is
         // still the deployer's responsibility, like maxBatchDeposits itself.
         if (_sealDelay == 0) revert SealDelayTooShort();
         maxBatchDeposits = _maxBatchDeposits;
@@ -179,7 +179,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /**
      * @notice EXCLUSIVE upper bound for enumerating deposit slots, NOT the number of deposits
      *         (that is {totalDeposits}).
-     * @dev Slots are sparse here: a batch sealed before it filled leaves its remaining slots empty
+     * @dev Slots are sparse here. A batch sealed before it filled leaves its remaining slots empty
      *      for good, so with `maxBatchDeposits = 4` and one deposit in each of batches 0 and 1 the
      *      live slots are 0 and 4. This returns 5 (the exclusive bound) while {totalDeposits}
      *      returns 2. Enumerating `[0, totalDeposits)` would have missed the deposit at slot 4.
@@ -207,11 +207,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     /// @notice Encrypted amount already delivered to `recipient` from `batchId`. A handle equal to
-    ///         that recipient's matched sum for the batch means fully claimed; a smaller one means a
+    ///         that recipient's matched sum for the batch means fully claimed. A smaller one means a
     ///         soft-failed or partial finalize left a remainder still claimable. Uninitialized (zero
     ///         handle) means no finalize has touched this (batch, recipient) yet.
     /// @dev "Fully claimed" is an encrypted fact, so it is reported as this handle rather than as a
-    ///      bool; compare it against the recipient's matched sum off-chain.
+    ///      bool. Compare it against the recipient's matched sum off-chain.
     function claimedAmount(uint256 batchId, address recipient) public view returns (euint64) {
         return _batches[batchId].claimed[recipient];
     }
@@ -224,11 +224,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     /**
      * @notice Record a deposit into the current batch by pulling `amount` underlying
-     *         from `msg.sender` (who must have approved this wrapper). `inputProof`
+     *         from `msg.sender`, who must have approved this wrapper. `inputProof`
      *         must bind `eRecipient` to `(this, msg.sender)`.
      *
      *         Non-multiple amounts are rounded down through the configured wrapper's
-     *         rate. The recorded amount is the underlying actually wrapped into escrow.
+     *         rate. The recorded amount is the underlying wrapped into escrow.
      * @return slot Global slot index of the new deposit.
      */
     function initWrap(
@@ -240,33 +240,33 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     /**
-     * @notice {initWrap}, but only if the deposit lands in `expectedBatchId`; otherwise revert
+     * @notice {initWrap}, but only if the deposit lands in `expectedBatchId`. Otherwise revert
      *         {NotCurrentBatch} without moving any funds.
      *
      * @dev Which batch a deposit joins is decided at execution, so a depositor who inspected a
      *      batch before submitting has no guarantee of joining it. Anyone can fill the remaining
      *      slots ahead of the transaction and push it into a fresh, empty batch, which is the
-     *      first half of a sandwich: displace the victim into a batch the attacker then fills with
-     *      deposits of its own, and at finalize the attacker excludes the slots it knows are not
-     *      the recipient's, leaving the victim's deposit identifiable. Pinning turns that into a
-     *      revert, so the depositor keeps their funds and can reassess.
+     *      first half of a sandwich. The attacker displaces the victim into a batch it then fills with
+     *      deposits of its own, and at finalize excludes the slots it knows are not the recipient's,
+     *      leaving the victim's deposit identifiable. Pinning turns that into a revert, so the
+     *      depositor keeps their funds and can reassess.
      *
-     *      It fixes displacement only; nothing stops an attacker
+     *      It fixes displacement only. Nothing stops an attacker
      *      from co-depositing into the batch you pinned. An anonymity set is only as good as the
      *      share of it you do not control, and with `maxBatchDeposits` at most 48 the slots are few
      *      enough to buy.
      *
-     *      Buying them is not the hard part, though; knowing whose deposit to buy them around is.
-     *      The attacker learns nothing from the batch itself: every recipient in it is encrypted, so
+     *      Buying them is not the hard part, though. Knowing whose deposit to buy them around is.
+     *      The attacker learns nothing from the batch itself, since every recipient in it is encrypted, so
      *      filling slots blind costs gas plus capital locked until finalize and identifies nobody.
      *      The attack needs a target picked BEFORE the deposit lands, which means an off-chain link
      *      from a cleartext depositor in {WrapInitiated} to the payment worth deanonymising. Read
-     *      the cost accordingly: cheap against a depositor already worth watching, pointless as a
+     *      the cost accordingly. Cheap against a depositor already worth watching, pointless as a
      *      dragnet.
      *
      *      What helps is that this adapter is SENDER-TRANSPARENT: depositor and
      *      amount are cleartext in {WrapInitiated}, so a batch dominated by freshly funded
-     *      addresses is visible BEFORE you join it. Pin the batch you actually inspected, and treat
+     *      addresses is visible BEFORE you join it. Pin the batch you inspected, and treat
      *      "who else is in here" as a decision the client must make, not one the contract makes.
      */
     function initWrapInto(
@@ -279,7 +279,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         slot = _pullAndRecord(amount, eRecipient, inputProof);
     }
 
-    /// @dev Shared body of the two deposit entry points. Callers must be `nonReentrant`: the token
+    /// @dev Shared body of the two deposit entry points. Callers must be `nonReentrant`, because the token
     ///      pull and wrap are external calls made before the deposit is recorded.
     function _pullAndRecord(
         uint256 amount,
@@ -297,7 +297,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *      Kept separate from token acquisition so derived adapters can source deposits
      *      differently while preserving this adapter's batch selection, close, and
      *      accounting semantics. Callers that acquire tokens through external calls
-     *      must ensure their public entrypoint is `nonReentrant` before calling this.
+     *      must make their public entrypoint `nonReentrant` before calling this.
      */
     function _recordBatchedDeposit(
         address depositor,
@@ -314,12 +314,12 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         // It is asserted rather than recovered from because the recovery this replaced was wrong:
         // it re-read the unchanged `currentBatchId` and handed back the SAME closed batch, so a
         // deposit would have landed in a batch whose anonymity set is already frozen, and possibly
-        // already scanned. The encrypted `claimed` ledger means the money is not lost (the late
-        // deposit raises `matched`, so a further finalize pays it out), but collecting it requires
+        // already scanned. The encrypted `claimed` ledger means the money is not lost, since the late
+        // deposit raises `matched` and a further finalize pays it out, but collecting it requires
         // re-finalizing a batch observers have already watched settle, which is exactly the linkage
         // the batch was supposed to hide.
         if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
-        // A batch is append-only and never has holes: deposits occupy `[0, fillCount)` and nothing
+        // A batch is append-only and never has holes. Deposits occupy `[0, fillCount)` and nothing
         // removes one, so the next free index IS the count. A partially filled batch that seals
         // stops growing rather than leaving gaps, which is why `getDepositsLength` is a bound over
         // sparse GLOBAL slots while this per-batch index stays contiguous.
@@ -386,17 +386,17 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *         RETRY-SAFE: a soft-failed or partial wrapper transfer leaves the remainder claimable.
      *
      *         Each batch is finalized INDEPENDENTLY: one `confidentialTransfer` per id (see
-     *         {_finalizeBatch}). Passing several ids is a convenience, not a gas optimization: it
+     *         {_finalizeBatch}). Passing several ids is a convenience, not a gas optimization. It
      *         does not merge the transfers, so on a hooked wrapper each id pays its own per-transfer
-     *         hook cost. Near the HCU cap, finalize one batch per call; multi-batch calls suit
+     *         hook cost. Near the HCU cap, finalize one batch per call. Multi-batch calls suit
      *         smaller batches.
      *
      *         REPLAY / DOUBLE-SPEND. Each batch tracks an encrypted `claimed[recipient]` (see
-     *         {Batch}); a finalize pays `matched - claimed` and credits back only what the wrapper
-     *         reports it actually moved, so `claimed` can never exceed a recipient's matched sum and
+     *         {Batch}). A finalize pays `matched - claimed` and credits back only what the wrapper
+     *         reports it moved, so `claimed` can never exceed a recipient's matched sum and
      *         a fully-claimed batch pays an encrypted zero on any repeat. A repeat call still runs
      *         the scan and emits a {WrapFinalized} carrying an encrypted-zero amount. That amount is
-     *         opaque in every path (a finalize of a batch the recipient is not in already emits one),
+     *         opaque in every path, since a finalize of a batch the recipient is not in already emits one,
      *         and the repeat is throttled by paying for the scan, so it is log noise rather than a
      *         forgeable payout. An empty id set is rejected outright.
      *
@@ -426,25 +426,25 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      * @dev Finalize ONE batch for `recipient`, retry- and partial-safe.
      *
      *      Pays `owed = matched - alreadyClaimed`, then credits `alreadyClaimed + transferred` with
-     *      the amount the wrapper reports it ACTUALLY moved, never the amount requested. Two
+     *      the amount the wrapper reports it moved, never the amount requested. Two
      *      invariants make this safe:
      *
      *        - `credited <= owed` always, so `claimed <= matched` holds by induction and
      *          `matched - claimed` never underflows. A recipient can therefore never be paid more
-     *          than their matched sum: no double-spend. An honest wrapper never returns more than it
-     *          was asked to move, but this clamps rather than assuming it; see {_creditedAmount}.
-     *        - crediting the ACTUAL amount means a wrapper that moved zero (freeze / pause / hook
-     *          veto) credits nothing and the whole claim survives for a later retry, and one that
+     *          than their matched sum, so no double-spend. An honest wrapper never returns more than it
+     *          was asked to move, but this clamps rather than assuming it. See {_creditedAmount}.
+     *        - crediting the ACTUAL amount means a wrapper that moved zero, as on a freeze, pause or hook
+     *          veto, credits nothing and the whole claim survives for a later retry, and one that
      *          moved only part credits that part and leaves the exact remainder claimable. This is
      *          why the batched adapter needs no exact-or-revert wrapper on the finalize path.
      *
      *      `matched` is recomputed from the batch's slots on every call, which is sound because
      *      deposits are immutable and the batch is closed before finalize, which is also why this adapter
      *      does NOT zero matched amounts (unlike the continuous one). Do not add such zeroing without
-     *      removing this ledger: it would make `matched` un-recomputable and break every retry.
+     *      removing this ledger, since it would make `matched` un-recomputable and break every retry.
      *
-     *      REENTRANCY: the credit commits AFTER the external transfer (it needs the returned amount),
-     *      so unlike the deposit path this leans entirely on {finalizeWrap} being `nonReentrant`: a
+     *      REENTRANCY: the credit commits AFTER the external transfer, because it needs the returned amount,
+     *      so unlike the deposit path this leans on {finalizeWrap} being `nonReentrant`. A
      *      reentrant finalize would otherwise read the stale `claimed` and double-pay. See the
      *      contract-level REENTRANCY note on {StealthWrapAdapter}.
      */
@@ -452,7 +452,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         uint256 startIndex = batchId * maxBatchDeposits;
         uint256 count = batch.fillCount;
 
-        // Per-slot payouts are independent (depth ~2 each); the tree keeps the reduction at
+        // Per-slot payouts are independent (depth ~2 each). The tree keeps the reduction at
         // ceil(log2 N) adds.
         euint64[] memory payouts = new euint64[](count);
         for (uint256 j = 0; j < count; j++) {
@@ -478,14 +478,14 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         emit WrapFinalized(recipient, FHE.toBytes32(credited), scannedIds);
     }
 
-    /// @dev What a finalize may add to `claimed`: the amount the wrapper reported, clamped to what
-    ///      was actually owed. An honest wrapper never moves more than it was asked to, so this is a
+    /// @dev What a finalize may add to `claimed`, which is the amount the wrapper reported clamped to
+    ///      what was owed. An honest wrapper never moves more than it was asked to, so this is a
     ///      no-op on every supported configuration, but `claimed <= matched` is the invariant that
     ///      keeps {_finalizeBatch}'s `FHE.sub` from underflowing, and this makes it hold by
     ///      construction instead of by trusting the wrapper's return value. Without it an
     ///      over-reporting wrapper pushes `claimed` past `matched`, and since FHE arithmetic WRAPS
     ///      the next `matched - claimed` becomes ~2^64: against a soft-failing wrapper that oversized
-    ///      request simply moves zero, so the visible effect is a stuck remainder rather than a
+    ///      request moves zero, so the visible effect is a stuck remainder rather than a
     ///      drain, but against an exact-or-revert one every later finalize for that recipient reverts
     ///      permanently. It also keeps {claimedAmount} truthful. One `FHE.min` per finalize CALL, not
     ///      per slot, so the cost does not scale with batch size. The clamped value is what
@@ -508,7 +508,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return block.timestamp >= uint256(batch.firstDepositAt) + sealDelay;
     }
 
-    // Raw state transition: callers must first prove the batch is full or delay-eligible.
+    // Raw state transition. Callers must first prove the batch is full or delay-eligible.
     function _closeBatchUnchecked(uint256 batchId, Batch storage batch) internal {
         batch.closed = true;
         if (batchId == currentBatchId) currentBatchId = batchId + 1;

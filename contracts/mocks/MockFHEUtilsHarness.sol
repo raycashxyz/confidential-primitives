@@ -9,7 +9,7 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  * @dev Exercises {FHEUtils} directly, so the library's guarantees are pinned independently of the
  *      contracts that happen to use it. The ACL containment in particular rests on the BEHAVIOUR of
  *      `FHEVMExecutor.verifyInput` rather than on its signature, so a dependency bump could break it
- *      with no compiler error; these are the tests that would catch that.
+ *      with no compiler error. These are the tests that would catch that.
  */
 contract MockFHEUtilsHarness is ZamaEthereumConfig {
     /// @param importer Whether THIS contract can use the imported handle (must be true).
@@ -37,8 +37,8 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
     /// @dev Last handle produced by {produce} / {sumOf}, so a test can read it back.
     euint64 public lastResult;
 
-    /// @dev `true` only for a handle this contract really produced: the {FHEUtils-isAuthoredBy}
-    ///      property, checked against a handle it computed itself and one it merely received.
+    /// @dev `true` only for a handle this contract produced. The {FHEUtils-isAuthoredBy}
+    ///      property, checked against a handle it computed itself and one it only received.
     function authoredHere(euint64 handle) external view returns (bool) {
         return FHEUtils.isAuthoredBy(handle, address(this));
     }

@@ -2,7 +2,7 @@
 "@raycashxyz/confidential-primitives": minor
 ---
 
-Encrypted-recipient handles are now single-use across both adapters: a replayed handle reverts
+Encrypted-recipient handles are now single-use across both adapters. A replayed handle reverts
 `RecipientHandleAlreadyUsed`, and `recipientHandleUsed(bytes32)` exposes the state.
 
 The handle is emitted in `WrapInitiated` so the recipient can spot their own payment, which makes it
@@ -12,6 +12,6 @@ without breaking any encryption. Once one member of that cluster is tied to a cl
 finalize or by timing, the rest follow. Batch boundaries and decoy choice don't remove a tag that
 travels with the deposit itself.
 
-Nothing legitimate is rejected: every payment request is meant to carry its own encryption, and a
+Nothing legitimate is rejected, since every payment request is meant to carry its own encryption, and a
 fresh encryption of the same address produces a different handle, so a recipient can still be paid
 any number of times.

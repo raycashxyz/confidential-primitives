@@ -1,7 +1,7 @@
 /**
  * BatchedStealthWrapAdapter: constructor + initWrap.
- * (finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
- * so vitest can run them on separate workers; all share the harness in setup/suite.)
+ * finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
+ * so vitest can run them on separate workers. All share the harness in setup/suite.
  */
 import {
   describe, it, expect
@@ -96,9 +96,9 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
     });
 
-    // Single-use is the default and a subclass may permit reuse: a deposit-address flow keyed on the
+    // Single-use is the default and a subclass may permit reuse. A deposit-address flow keyed on the
     // handle (salt == handle) cannot rotate it, and its deposits are already clustered by the payer's
-    // clear transfer to that public address. Reuse must stay claimable: both deposits pay out to R.
+    // clear transfer to that public address. Reuse must stay claimable, so both deposits pay out to R.
     it("lets a subclass permit handle reuse without breaking the payout", async () => {
       const {
         publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send, decryptBalance
@@ -119,7 +119,7 @@ describe("BatchedStealthWrapAdapter", () => {
       );
 
       await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
-      // The handle is recorded as seen (the view reports history, not policy)...
+      // The handle is recorded as seen, since the view reports history, not policy...
       expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
       // ...so the same handle is accepted again where the base adapter reverts.
       await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
@@ -209,7 +209,7 @@ describe("BatchedStealthWrapAdapter", () => {
       ], fheTxOpts(alice.account)));
       expect(await wrapper.read.batchClosed([0n])).toBe(true);
 
-      // A LATER transaction: the deposit-time transient grant is long gone, so this only works if
+      // A LATER transaction. The deposit-time transient grant is long gone, so this only works if
       // the hook persisted access.
       await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
       // The finalize recorded a claim for alice (its encrypted amount handle is now set), which it
@@ -362,8 +362,8 @@ describe("BatchedStealthWrapAdapter", () => {
         "ZeroAmount",
       );
 
-      // Non-multiples are rounded down by the configured wrapper; the adapter
-      // records the amount actually wrapped, not the requested amount.
+      // Non-multiples are rounded down by the configured wrapper. The adapter
+      // records the amount wrapped, not the requested amount.
       const { handle: h2, inputProof: p2 } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
@@ -434,7 +434,7 @@ describe("BatchedStealthWrapAdapter", () => {
       );
       expect(await underlying.read.balanceOf([alice.account.address])).toBe(balanceBefore);
 
-      // Pinning the batch she can actually join works normally.
+      // Pinning the batch she can join works normally.
       await send(wrapper.write.initWrapInto([1n, AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
       expect(await wrapper.read.batchFillCount([1n])).toBe(1n);
     });

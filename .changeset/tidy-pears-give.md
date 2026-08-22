@@ -7,6 +7,6 @@ wrapper's `rate()`, and finalize names the scanned set. The payout stays encrypt
 recipient can unwrap it publicly, and once its clear value is known, anyone can search the scanned
 amounts for a subset summing to it. A unique match identifies the recipient's deposits exactly.
 
-Nothing on-chain can prevent it: it happens after delivery under the recipient's own key. Recipients
+Nothing on-chain can prevent it, because it happens after delivery under the recipient's own key. Recipients
 should unwrap a different amount than they received, split withdrawals, or mix with other funds
 first.

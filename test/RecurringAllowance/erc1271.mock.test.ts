@@ -122,8 +122,8 @@ describe("RecurringAllowance: ERC-1271 signers and cross-account replay", () => 
       functionName: "setOperator",
       args: [allowance.address, until]
     });
-    // Anyone may call the mock's execute; it makes the wallet the msg.sender to the token.
-    // Explicit gas: tevm under-estimates the nested call through execute.
+    // Anyone may call the mock's execute. It makes the wallet the msg.sender to the token.
+    // Explicit gas, because tevm under-estimates the nested call through execute.
     await sendOk(wallet.write.execute([token.address, setOperatorData], fheTxOpts(deployer.account)));
   };
 
@@ -172,7 +172,7 @@ describe("RecurringAllowance: ERC-1271 signers and cross-account replay", () => 
       ...grant
     });
 
-    // Replay against wallet B (same signer) reverts: the digest binds owner=B now.
+    // Replay against wallet B (same signer) reverts, because the digest binds owner=B now.
     await assertRevertsWith(
       allowance.write.permitSetPermission([walletB.address, grant, inputProof, signature], txOpts(bob.account)),
       "InvalidSigner",

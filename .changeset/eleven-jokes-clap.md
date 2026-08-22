@@ -12,6 +12,6 @@ kept, with no refund path. That is not repairable here, because the shortfall is
 already pulled and the outcome that would have to gate it is a ciphertext.
 
 On finalize the exposure differs by adapter, and the batched one no longer has it (see the
-retry-safe finalize change in this release). The continuous adapter still does: it consumes deposits
+retry-safe finalize change in this release). The continuous adapter still does. It consumes deposits
 by zeroing them before the transfer, and a flat pool cannot attribute a partial payout back to
 individual deposits. Documented in `StealthWrapAdapter` and the README.

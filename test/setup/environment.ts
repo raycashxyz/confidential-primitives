@@ -31,7 +31,7 @@ export interface TestEnvironment {
   publicClient: PublicClient;
   wallets: NamedWallets;
   chain: Chain;
-  /** deployoor in-memory store; pass to getOrDeploy so nothing touches disk. */
+  /** deployoor in-memory store. Pass to getOrDeploy so nothing touches disk. */
   store: TestClients["store"];
   /** tevm cheatcodes (mine, setBalance, …). */
   cheatcodes: TestClients["cheatcodes"];
@@ -41,7 +41,7 @@ export interface TestEnvironment {
   warpTo: (timestamp: bigint) => Promise<void>;
   /** Prefunded wallet client at `index` (0..4 alias deployer..signer) for suites needing extras. */
   walletAt: (index: number) => WalletWithAccount;
-  /** Every prefunded wallet (all tevm accounts); used by the snapshot harness to resync nonces. */
+  /** Every prefunded wallet (all tevm accounts). Used by the snapshot harness to resync nonces. */
   allWallets: WalletWithAccount[];
   fhevm: FhevmTevmRuntime["fhevm"];
 }
@@ -49,8 +49,8 @@ export interface TestEnvironment {
 /**
  * Boot a fresh in-memory EVM with the Zama FHEVM mock installed.
  *
- * chainId is viem's `hardhat` chain (31337): the contracts inherit `ZamaEthereumConfig`, which at
- * 31337 selects the local coprocessor config: the host addresses fhevm-tevm-mocks
+ * chainId is viem's `hardhat` chain (31337). The contracts inherit `ZamaEthereumConfig`, which at
+ * 31337 selects the local coprocessor config, the host addresses fhevm-tevm-mocks
  * installs. Any other chainId makes the wrapper constructor revert `ZamaProtocolUnsupported`.
  */
 export async function createTestEnvironment (): Promise<TestEnvironment> {
@@ -77,7 +77,7 @@ export async function createTestEnvironment (): Promise<TestEnvironment> {
     return walletFor(account);
   };
 
-  // tevm has no `evm_increaseTime`; mine two blocks `seconds` apart to move the head forward.
+  // tevm has no `evm_increaseTime`. Mine two blocks `seconds` apart to move the head forward.
   const warpTime = async (seconds: bigint): Promise<void> => {
     await clients.cheatcodes.mine({
       blockCount: 2,

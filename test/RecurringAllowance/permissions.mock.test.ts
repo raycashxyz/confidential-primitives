@@ -83,7 +83,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(await S.decryptAllowanceHandle(permission.spent, alice)).toBe(0n);
     expect(await S.decryptAllowanceHandle(permission.spent, bob)).toBe(0n);
 
-    // A SECOND permission under the same key: the contract skips re-granting the shared
+    // A SECOND permission under the same key. The contract skips re-granting the shared
     // encrypted-zero to save gas, so this checks the spender can still decrypt its
     // freshly-created (still-zero) spent, i.e. the optimization didn't under-grant.
     await S.setPermission({
@@ -244,7 +244,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(updated.duration).toBe(WEEK);
     expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(0n); // reset
-    // startTime is unchanged; lastUpdated re-anchors to now (>= startTime) so `spent` is
+    // startTime is unchanged. lastUpdated re-anchors to now (>= startTime) so `spent` is
     // fresh for the current grid period and does not immediately re-reset on next spend.
     expect(updated.startTime).toBe(before.startTime);
     expect(updated.lastUpdated).toBe(blockTimestamp);
@@ -314,7 +314,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
       ], txOpts(alice.account)),
       "PermissionNotFound",
     );
-    // resulting window invalid: startTime pushed past the (unchanged) endTime
+    // resulting window invalid, with startTime pushed past the (unchanged) endTime
     await assertRevertsWith(
       allowance.write.updatePermission([
         token.address,
@@ -378,8 +378,8 @@ describe("RecurringAllowance: permission lifecycle", () => {
       limit: 200n
     });
 
-    // fheTxOpts: swap-and-pop earns storage refunds, which tevm's gas estimate
-    // does not cover (the limit must cover the pre-refund peak).
+    // fheTxOpts because swap-and-pop earns storage refunds, which tevm's gas estimate
+    // does not cover. The limit must cover the pre-refund peak.
     const receipt = await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
@@ -407,7 +407,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     );
   });
 
-  // Indices are not an address the owner controls: any spender can move them by triggering the
+  // Indices are not an address the owner controls, since any spender can move them by triggering the
   // swap-and-pop prune inside _evaluatePermissions, which a zero-amount tryTransferFrom reaches
   // while moving no funds. Under the old (index, id) addressing that front-run made the owner's
   // revocation revert, letting a spender at spent == limit survive to the next period reset.
@@ -433,7 +433,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
 
     await H.warpTime(200n); // P0 is now expired and prunable
 
-    // The spender front-runs: no funds move, but the prune swaps P1 from index 1 to index 0.
+    // The spender front-runs. No funds move, but the prune swaps P1 from index 1 to index 0.
     const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 0n);
     await S.sendOk(allowance.write.tryTransferFrom([[{
       from: alice.account.address,
@@ -445,7 +445,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(1n);
     expect((await S.getPermission(alice.account.address, bob.account.address, 0n)).id).toBe(liveId);
 
-    // The revocation alice already signed still lands: it names the id, which travelled with it.
+    // The revocation alice already signed still lands, because it names the id, which travelled with it.
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,

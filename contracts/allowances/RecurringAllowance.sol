@@ -19,52 +19,52 @@ import {UnorderedNonces} from "./base/UnorderedNonces.sol";
  * @notice Encrypted, period-based spending permissions for ERC-7984 confidential
  *         tokens: "let this spender pull up to X per day", with X encrypted.
  *
- *         ERC-7984's native delegation is `setOperator`, which is all-or-nothing: an
+ *         ERC-7984's native delegation is `setOperator`, which is all-or-nothing. An
  *         operator can move ANY amount. This contract turns that into scoped delegation.
  *         The user makes RecurringAllowance an operator once, then grants per-spender
- *         permissions here; a spender can only move funds through {transferFrom}, which
+ *         permissions here. A spender can only move funds through {transferFrom}, which
  *         enforces the encrypted budgets. Note the limits bind only this contract:
- *         any OTHER operator the user approves on the token bypasses them entirely.
+ *         any OTHER operator the user approves on the token bypasses them.
  *
  *         CONJUNCTIVE SEMANTICS: all active permissions for a (user, token, spender)
  *         key must allow a spend (AND logic), so "100/day AND 500/week" works out of
- *         the box. The flip side: adding a permission only ever TIGHTENS the allowance
- *         (a zero-limit permission blocks the key entirely). To raise a limit, update
+ *         the box. The flip side is that adding a permission only ever TIGHTENS the allowance,
+ *         and a zero-limit permission blocks the key. To raise a limit, update
  *         the existing permission instead of adding one.
  *
- *         OBLIVIOUS SPENDING: a denied spend does not revert; it transfers an
+ *         OBLIVIOUS SPENDING: a denied spend does not revert. It transfers an
  *         encrypted zero. Storage writes, FHE ops and events are identical either way,
  *         so an on-chain observer cannot distinguish a denied attempt from a permitted
- *         one; only holders of the relevant decryption rights can. `spent` is
- *         credited with the amount the token reports as ACTUALLY moved, so a spend
+ *         one. Only holders of the relevant decryption rights can. `spent` is
+ *         credited with the amount the token reports as moved, so a spend
  *         that fails on the user's balance does not consume allowance.
  *
  *         PERIOD GRID: periods are fixed windows anchored at `startTime` (period n is
  *         `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding
  *         window. `spent` resets lazily on the first spend attempt in a new period.
  *         Worst case a spender can move 2x the limit in a `duration`-long span that
- *         straddles a boundary (end of one period + start of the next). That is inherent to
- *         fixed-window budgets; size limits accordingly.
+ *         straddles a boundary, the end of one period plus the start of the next. That is
+ *         inherent to fixed-window budgets, so size limits accordingly.
  *
- *         DECRYPTION RIGHTS (who can see what): `limit` and `spent` are decryptable by
- *         the user AND the spender: the spender must be able to see their own budget,
+ *         DECRYPTION RIGHTS, or who can see what. `limit` and `spent` are decryptable by
+ *         the user AND the spender, since the spender must be able to see their own budget,
  *         and an active spender could infer it anyway by probing. Third parties see
  *         only the cleartext shape: that a permission exists, its period, its window,
  *         and when spends were attempted. Amounts stay encrypted end to end.
  *
- *         SIGNATURE PERMITS (the Permit2 analog): because amounts are encrypted, a permit
- *         signs the CIPHERTEXT HANDLE: the owner encrypts the amount off-chain with the
+ *         SIGNATURE PERMITS, the Permit2 analog. Because amounts are encrypted, a permit
+ *         signs the CIPHERTEXT HANDLE. The owner encrypts the amount off-chain with the
  *         input proof bound to `(this, spender)` and signs EIP-712 over the struct
  *         including that handle, so only the named spender can submit it and no other
  *         ciphertext can be substituted. {permitSetPermission} creates a permission
- *         gaslessly for the owner (the spender submits and pays); {permitTransferFrom}
+ *         gaslessly for the owner, with the spender submitting and paying. {permitTransferFrom}
  *         executes a one-shot transfer up to a signed encrypted cap, optionally bound to
  *         a recipient (a "confidential cheque"). Nonces are Permit2-style unordered
- *         bitmaps; signatures verify via ECDSA or ERC-1271. NOTE a cheque that submits
- *         SUCCESSFULLY burns its nonce regardless of the encrypted outcome (the outcome is
- *         unknowable in cleartext), but a token that reverts rolls the nonce back and leaves the
- *         cheque live; see {permitTransferFrom}. How long an input proof remains submittable
- *         after signing is an operational property of the FHEVM gateway; size `sigDeadline`
+ *         bitmaps. Signatures verify via ECDSA or ERC-1271. NOTE a cheque that submits
+ *         SUCCESSFULLY burns its nonce regardless of the encrypted outcome, since the outcome is
+ *         unknowable in cleartext, but a token that reverts rolls the nonce back and leaves the
+ *         cheque live. See {permitTransferFrom}. How long an input proof remains submittable
+ *         after signing is an operational property of the FHEVM gateway. Size `sigDeadline`
  *         accordingly.
  *
  *         REENTRANCY: {transferFrom}, {tryTransferFrom} and {permitTransferFrom} call the
@@ -74,9 +74,9 @@ import {UnorderedNonces} from "./base/UnorderedNonces.sol";
  */
 contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, ReentrancyGuard, EIP712, UnorderedNonces {
     // `owner` is signed, not only passed as an argument, so an ERC-1271 wallet sharing a signer
-    // with another account cannot have its signature replayed against that sibling: the
+    // with another account cannot have its signature replayed against that sibling, because the
     // digest is account-specific. `epoch` lets an owner invalidate every outstanding
-    // signature at once (see {invalidateAllPermits}); the contract mixes in the CURRENT
+    // signature at once (see {invalidateAllPermits}). The contract mixes in the CURRENT
     // on-chain epoch, so a bump makes prior signatures fail verification.
     bytes32 public constant PERMIT_GRANT_TYPEHASH = keccak256(
         "PermitGrant(address owner,address token,address spender,bytes32 limitHandle,uint64 duration,uint64 startTime,uint64 endTime,uint256 nonce,uint256 epoch,uint256 sigDeadline)"
@@ -86,15 +86,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     );
     /// @notice Hard cap on live permissions per (user, token, spender) key.
     /// @dev Every active permission adds ~6 FHE ops to each {transferFrom} for the key,
-    ///      and the FHEVM HCU-per-tx budget bounds how many fit: the batched stealth
+    ///      and the FHEVM HCU-per-tx budget bounds how many fit. The batched stealth
     ///      adapter measured ~170 ops/tx before reverting, so 8 permissions (~50 ops)
     ///      leaves wide headroom. Realistic use is 2-4 tiers (daily/weekly/monthly);
     ///      without a cap a user could grow the array until every spend for the key
     ///      exceeds the budget, bricking the allowance until {lockdown}.
     uint256 public constant MAX_PERMISSIONS = 8;
 
-    /// @dev Shared encrypted zero (trivial encryption of 0, publicly known, so sharing
-    ///      one handle across users leaks nothing). Fresh `spent` values point here.
+    /// @dev Shared encrypted zero, a trivial encryption of 0 that is publicly known, so sharing
+    ///      one handle across users leaks nothing. Fresh `spent` values point here.
     euint64 private immutable E_ZERO;
 
     mapping(address user => mapping(address token => mapping(address spender => Permission[]))) private _permissions;
@@ -130,7 +130,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @param inputProof Proof for `limit`
      * @param duration Period length in seconds; 0 means `type(uint64).max` (never resets)
      * @param startTime Grid anchor and activation time; 0 means `block.timestamp`.
-     *        May be in the past (elapsed periods simply count from there).
+     *        May be in the past, and elapsed periods then count from there.
      * @param endTime Inclusive expiry; 0 means `type(uint64).max` (no expiry).
      *        Must not be in the past, and must be after `startTime`. Expiry is INCLUSIVE, so
      *        `endTime == block.timestamp` is accepted and leaves the permission active for the
@@ -157,12 +157,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @notice Create a permission from an owner's signed {PermitGrant}: the gasless
-     *         grant flow. The owner signs off-chain; the named spender submits (and
-     *         pays gas). The resulting permission is indistinguishable from one the
+     *         grant flow. The owner signs off-chain, and the named spender submits and
+     *         pays gas. The resulting permission is indistinguishable from one the
      *         owner created via {setPermission}.
      * @dev The grant's `limitHandle` must come with an input proof the owner created
      *      bound to `(this, grant.spender)`, which is also why only the named spender
-     *      can submit: for anyone else the coprocessor rejects the proof. The
+     *      can submit, since for anyone else the coprocessor rejects the proof. The
      *      explicit {SpenderMismatch} check just fails faster and cleaner.
      *      Zero-valued time fields resolve AT SUBMISSION (startTime 0 = "when the
      *      spender activates it"), bounded by `sigDeadline`.
@@ -202,7 +202,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one poisoned payer
      *      would abort an entire {tryTransferFrom} batch rather than being skipped.
      *
-     *      The empty-proof rejection is kept as an explicit first line: creation always supplies a
+     *      The empty-proof rejection is kept as a first line. Creation always supplies a
      *      limit, and failing here is cheaper and names this contract's own error. Only
      *      {updatePermission} reads an empty proof as a sentinel ("leave the limit unchanged"),
      *      behind its own `length > 0` gate.
@@ -282,13 +282,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Modify an existing permission. Zero-valued parameters mean "leave unchanged"
-     *         (to actually set a field to its "unlimited" value, pass `type(uint64).max`;
-     *         to skip the limit, pass an empty `inputProof`).
+     * @notice Modify an existing permission. Zero-valued parameters mean "leave unchanged".
+     *         To set a field to its "unlimited" value, pass `type(uint64).max`, and
+     *         to skip the limit, pass an empty `inputProof`.
      * @dev Changing `duration` or `startTime` to a DIFFERENT value re-anchors the period
-     *      grid, so `spent` resets; otherwise the old grid's spend history would be
-     *      measured against the new grid (and a future `startTime` would make the reset
-     *      math underflow). Re-submitting the SAME value is a no-op and does NOT reset,
+     *      grid, so `spent` resets. Otherwise the old grid's spend history would be
+     *      measured against the new grid, and a future `startTime` would make the reset
+     *      math underflow. Re-submitting the SAME value is a no-op and does NOT reset,
      *      so a wallet echoing back a full record can't silently refresh the budget.
      *
      *      TREAT A GRID CHANGE AS ISSUING A FRESH BUDGET, NOT AS AN EDIT. Because it zeroes
@@ -298,13 +298,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      distinct from, and stacks with, the ~2x the contract-level PERIOD GRID note already
      *      describes for a natural rollover.
      *
-     *      To TIGHTEN a live permission safely, prefer {invalidatePermission} (or {lockdown}) and
-     *      re-grant, or lower only the `limit` (a limit-only update keeps the current period's
-     *      `spent`, so it blocks further spending immediately rather than releasing a fresh window).
-     *      When a grid change is genuinely needed against a hot spender, submit it through a private
+     *      To TIGHTEN a live permission safely, prefer {invalidatePermission} or {lockdown} and
+     *      re-grant, or lower only the `limit`. A limit-only update keeps the current period's
+     *      `spent`, so it blocks further spending immediately rather than releasing a fresh window.
+     *      When a grid change is needed against a hot spender, submit it through a private
      *      relay.
-     *      Changing only `limit` keeps the current period's `spent`: lowering the limit
-     *      below what is already spent simply blocks further spending until the next reset.
+     *      Changing only `limit` keeps the current period's `spent`, so lowering the limit
+     *      below what is already spent blocks further spending until the next reset.
      *      The permission is addressed by its stable `permissionId` (see {_findPermission}).
      */
     function updatePermission(
@@ -320,7 +320,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
         Permission storage permission = permissions[_findPermission(permissions, permissionId)];
 
-        // Cleartext first: every reason to reject this call is knowable without touching a
+        // Cleartext first. Every reason to reject this call is knowable without touching a
         // ciphertext, while importing one pays for coprocessor proof verification and three
         // ACL grants that a revert would only roll back. {_validateNewPermission} already
         // establishes this order on the creation path.
@@ -337,8 +337,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (gridChanged) {
             permission.spent = E_ZERO;
             // Anchor accounting so `spent` is fresh for the CURRENT grid period and does
-            // not immediately re-reset: clamp to now for a started grid, or to startTime
-            // while future-dated (keeps the startTime <= lastUpdated invariant).
+            // not immediately re-reset. Clamp to now for a started grid, or to startTime
+            // while future-dated, which keeps the startTime <= lastUpdated invariant.
             permission.lastUpdated =
                 permission.startTime > uint64(block.timestamp) ? permission.startTime : uint64(block.timestamp);
         }
@@ -359,7 +359,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @notice Revoke a single permission, leaving the key's other permissions intact.
-     * @dev Swap-and-pop removal; addressed by its stable `permissionId` like {updatePermission}.
+     * @dev Swap-and-pop removal, addressed by its stable `permissionId` like {updatePermission}.
      */
     function invalidatePermission(address token, address spender, uint256 permissionId) external {
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
@@ -378,9 +378,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @dev The panic button, scoped to stored permissions. It does NOT cancel
      *      signed-but-unsubmitted {PermitGrant}/{PermitSpend} signatures (call
      *      {invalidateAllPermits} for those), cannot revoke the operator status this
-     *      contract holds on the token (do that on the token for belt and braces), and
-     *      cannot revoke FHE decryption rights already granted on past handles (the
-     *      spender keeps being able to read the historical limits it already knew).
+     *      contract holds on the token, which you do on the token itself, and
+     *      cannot revoke FHE decryption rights already granted on past handles, so the
+     *      spender keeps being able to read the historical limits it already knew.
      */
     function lockdown(TokenSpenderPair[] calldata pairs) external {
         for (uint256 i = 0; i < pairs.length; i++) {
@@ -392,10 +392,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @notice Invalidate EVERY outstanding permit signature for `msg.sender` at once by
-     *         bumping their {permitEpoch}. Complements {lockdown}: lockdown revokes stored
-     *         permissions for specific pairs; this cancels signed-but-unsubmitted
-     *         {PermitGrant}/{PermitSpend} signatures (which lockdown cannot see, since a
-     *         signature lives off-chain until submitted). To cancel one specific permit
+     *         bumping their {permitEpoch}. Complements {lockdown}, which revokes stored
+     *         permissions for specific pairs. This cancels signed-but-unsubmitted
+     *         {PermitGrant}/{PermitSpend} signatures, which lockdown cannot see, since a
+     *         signature lives off-chain until submitted. To cancel one specific permit
      *         instead, use {invalidateUnorderedNonces}.
      * @return newEpoch The owner's epoch after the bump
      */
@@ -405,19 +405,19 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Spend from `from`'s allowance: transfer up to the encrypted `amount` of
+     * @notice Spend from `from`'s allowance, transferring up to the encrypted `amount` of
      *         `token` to `to`, if every active permission for (from, token, msg.sender)
      *         allows it. Denied spends transfer an encrypted zero instead of reverting.
      * @dev Reverts `NoPermissions` only on the cleartext precondition (no active
-     *      permission window); everything amount-dependent is oblivious.
+     *      permission window). Everything amount-dependent is oblivious.
      * @param from The user whose allowance is spent
      * @param to The recipient
      * @param amount Encrypted amount (input proof bound to `(this, msg.sender)`)
      * @param inputProof Proof for `amount`
      * @param token The ERC-7984 token to move
-     * @return transferred Encrypted amount actually moved (0 if denied or balance-short).
+     * @return transferred Encrypted amount moved (0 if denied or balance-short).
      *         Transiently ACL-allowed to the caller, so contract spenders can chain
-     *         FHE ops on it within the same transaction; `from`/`to` can decrypt it
+     *         FHE ops on it within the same transaction. `from`/`to` can decrypt it
      *         via the token's own grants.
      */
     function transferFrom(
@@ -431,12 +431,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Batch variant of {transferFrom}. Atomic: if any item hits a cleartext
+     * @notice Batch variant of {transferFrom}. Atomic, so if any item hits a cleartext
      *         revert (e.g. `NoPermissions` after a user lockdown), the whole batch
-     *         reverts; filter recipients off-chain first, or use {tryTransferFrom}.
+     *         reverts. Filter recipients off-chain first, or use {tryTransferFrom}.
      * @dev Batch size is bounded by the FHEVM per-transaction budget, not by this contract. Items
      *      share no FHE work, so cost is the sum over items and depends on each payer's active
-     *      tiers; see {activePermissionCount}, which exists to size this off-chain.
+     *      tiers. See {activePermissionCount}, which exists to size this off-chain.
      */
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
@@ -446,7 +446,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Lenient batch for payment processors: items that fail a CLEARTEXT
+     * @notice Lenient batch for payment processors. Items that fail a CLEARTEXT
      *         precondition (no active permission window, or the token call reverting,
      *         e.g. an expired operator grant) are skipped with a {TransferSkipped}
      *         event instead of reverting the batch. Encrypted denials are NOT skips:
@@ -454,25 +454,25 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         {transferFrom}.
      *
      *         Leniency does NOT extend to a token that returns a handle it is not authorized on.
-     *         That reverts `InvalidReturnedHandle` and takes the whole batch with it; see
+     *         That reverts `InvalidReturnedHandle` and takes the whole batch with it. See
      *         {_isTokenAuthored} and the note at the call site for why this failure is escalated
      *         rather than skipped.
-     * @dev Malformed input proofs still revert the whole call (the import is not
-     *      catchable), as does a `token` address with no code (the compiler's
-     *      extcodesize check reverts outside try/catch); both are the caller's own
+     * @dev Malformed input proofs still revert the whole call, since the import is not
+     *      catchable, as does a `token` address with no code, since the compiler's
+     *      extcodesize check reverts outside try/catch. Both are the caller's own
      *      inputs to get right.
      *
      *      Exhausting the FHEVM per-transaction budget is NOT skipped. Permission evaluation runs
-     *      before the `try` opens, so an over-large batch reverts in full (including the items that
-     *      would have fit), with `HCULimit`'s `HCUTransactionLimitExceeded` or
+     *      before the `try` opens, so an over-large batch reverts in full, including the items that
+     *      would have fit, with `HCULimit`'s `HCUTransactionLimitExceeded` or
      *      `HCUTransactionDepthLimitExceeded` naming the budget that was exceeded. Cost is the sum
      *      over items and depends on each payer's active tiers, so one payer with more tiers than
      *      expected lowers the ceiling for the rest of the batch. Size batches with
      *      {activePermissionCount}.
-     * @return executed Per-item flags: true if the item completed and its spend was recorded (the
-     *         encrypted outcome may still be zero). False means the item was skipped; see
-     *         {TransferSkipped} for which reason. No flag reports a transfer that moved funds: the
-     *         one case that could have (an unauthorized return handle) now reverts the call.
+     * @return executed Per-item flags. True if the item completed and its spend was recorded, even
+     *         if the encrypted outcome is zero. False means the item was skipped, and
+     *         {TransferSkipped} says why. No flag reports a transfer that moved funds, because the
+     *         one case that could have, an unauthorized return handle, reverts the call.
      */
     function tryTransferFrom(TransferDetails[] calldata transfers) external nonReentrant returns (bool[] memory executed) {
         executed = new bool[](transfers.length);
@@ -483,34 +483,34 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Execute an owner-signed one-shot transfer: move up to the signed encrypted
-     *         cap of `permit.token` from `owner` to `to`: the "confidential cheque".
-     *         The spender chooses the actual `requested` amount at execution; the cap is enforced
-     *         obliviously and all-or-nothing: an over-cap request moves an encrypted zero rather
+     * @notice Execute an owner-signed one-shot transfer, the "confidential cheque", moving up
+     *         to the signed encrypted cap of `permit.token` from `owner` to `to`.
+     *         The spender chooses the `requested` amount at execution. The cap is enforced
+     *         obliviously and all-or-nothing, so an over-cap request moves an encrypted zero rather
      *         than being clamped down to the cap.
-     * @dev Touches no stored permissions; this is a parallel, stateless rail (plus the
-     *      nonce bit). The nonce is consumed on submission REGARDLESS of the encrypted
-     *      outcome: a cheque against an insufficient balance is burned unspent (the
-     *      outcome cannot be read in cleartext). Like every spend path, requires this
+     * @dev Touches no stored permissions. This is a parallel, stateless rail, plus the
+     *      nonce bit. The nonce is consumed on submission REGARDLESS of the encrypted
+     *      outcome, so a cheque against an insufficient balance is burned unspent, since the
+     *      outcome cannot be read in cleartext. Like every spend path, requires this
      *      contract to be an ERC-7984 operator for `owner` on the token.
      *
      *      EXCEPTION: the nonce only burns if the call SUCCEEDS. It is written before the token
      *      call, so a token that REVERTS instead of returning an encrypted zero takes the bitmap
      *      write down with it and the cheque stays submittable until `sigDeadline`. The case that
-     *      matters in practice is an owner who has never received confidential tokens: some
+     *      matters in practice is an owner who has never received confidential tokens, since some
      *      implementations revert on the uninitialized balance handle rather than treating it as
      *      zero. Such a cheque survives, and the named spender can resubmit it once the owner is
      *      funded. Any retry is still bounded by the signed spender, recipient (when bound),
      *      encrypted cap, epoch and deadline, but an owner who wants a failed cheque gone must
-     *      cancel it explicitly with {invalidateUnorderedNonces} or {invalidateAllPermits}.
+     *      cancel it with {invalidateUnorderedNonces} or {invalidateAllPermits}.
      * @param owner The signer whose funds move
      * @param permit The signed cheque parameters
      * @param capProof Proof for `permit.capHandle` (bound to `(this, permit.spender)`)
      * @param requested The spender's encrypted requested amount
      * @param requestedProof Proof for `requested` (bound to `(this, msg.sender)`)
-     * @param to Recipient; must match `permit.to` when the cheque binds one
+     * @param to Recipient. Must match `permit.to` when the cheque binds one
      * @param signature EIP-712 signature by `owner` (ECDSA or ERC-1271)
-     * @return transferred Encrypted amount actually moved (transiently ACL'd to the caller)
+     * @return transferred Encrypted amount moved (transiently ACL'd to the caller)
      */
     function permitTransferFrom(
         address owner,
@@ -537,8 +537,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
     }
 
-    /// @dev All-or-nothing oblivious amount: `requested` when it is at or below the signed cap, an
-    ///      encrypted zero otherwise. NOT a clamp: a request of 150 against a cap of 100 moves
+    /// @dev All-or-nothing oblivious amount. `requested` when it is at or below the signed cap, an
+    ///      encrypted zero otherwise. NOT a clamp, so a request of 150 against a cap of 100 moves
     ///      zero, not 100. The cheque's nonce is consumed either way, so the signer must issue
     ///      a fresh cheque to retry.
     function _chequeAmount(
@@ -548,7 +548,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bytes calldata requestedProof
     ) private returns (euint64) {
         // The cap is the OWNER's, encrypted bound to the spender and submitted by them, and it is
-        // never granted onward; only `transferred` is. Importing through FHEUtils keeps it that way:
+        // never granted onward, only `transferred` is. Importing through FHEUtils keeps it that way.
         // `FHE.fromExternal` would hand the spender transient access to the cap, which a CONTRACT
         // spender can persist and decrypt, revealing how much room the cheque has left.
         euint64 eCap = FHEUtils.fromExternal(externalEuint64.wrap(capHandle), capProof, msg.sender);
@@ -557,7 +557,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /// @notice Permission at `permissionIndex` for the key. Indices are NOT stable
-    ///         across writes (swap-and-pop); use the returned `id` to re-address it.
+    ///         across writes (swap-and-pop). Use the returned `id` to re-address it.
     function getPermission(
         address user,
         address token,
@@ -590,7 +590,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice How many permissions a spend against this key would evaluate right now: the count
+     * @notice How many permissions a spend against this key would evaluate right now, which is the count
      *         that drives its FHE cost. Excludes expired and not-yet-started entries, exactly as
      *         {_evaluatePermissions} does; {getPermissionCount} counts stored entries instead.
      * @dev Size batches with this. Each item in {transferFrom} and {tryTransferFrom} evaluates its
@@ -599,18 +599,18 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      call. From this repo's benchmark, a single transfer costs ~1,957,000 HCU at 2 active
      *      permissions, ~3,301,000 at 4 and ~5,989,000 at 8, against a 20,000,000 per-transaction
      *      budget, so roughly 10, 6 and 3 items respectively, and a mixed batch is bounded by its
-     *      total. Ten two-tier payments settle; let one payer reach eight tiers and the same batch
+     *      total. Ten two-tier payments settle. Let one payer reach eight tiers and the same batch
      *      exceeds the budget and reverts.
      *
-     *      Treat those figures as a floor and this as a planning view, not an on-chain guard: the
+     *      Treat those figures as a floor and this as a planning view, not an on-chain guard. The
      *      same budget also pays for the token's own `confidentialTransferFrom`, which this contract
-     *      cannot measure and whose cost can change under it (a hooked token gaining modules). An
+     *      cannot measure and whose cost can change under it, as when a hooked token gains modules. An
      *      over-budget batch reverts in full rather than skipping the items that did not fit.
      *
      *      The count applies the spend path's own active test, so a client filtering on
-     *      `startTime`/`endTime` itself cannot disagree with it; note that `endTime` expiry is INCLUSIVE.
+     *      `startTime`/`endTime` itself cannot disagree with it. Note that `endTime` expiry is INCLUSIVE.
      *
-     *      The separate 5,000,000 DEPTH budget can also bind, though it usually does not: within an
+     *      The separate 5,000,000 DEPTH budget can also bind, though it usually does not. Within an
      *      item the checks are ANDed serially, and across items `spent` chains one `FHE.add` per
      *      repeat of the SAME (user, token, spender) key. Batches that hit one payer many times
      *      should account for that as well.
@@ -648,13 +648,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Check-all, transfer, then record what actually moved.
+     * @dev Check-all, transfer, then record what moved.
      *
-     *      The permission check gates on the REQUESTED amount; `spent` is credited with
+     *      The permission check gates on the REQUESTED amount. `spent` is credited with
      *      the token's reported ACTUAL transfer. OZ's ERC7984 moves all-or-nothing
      *      (`FHESafeMath.tryDecrease`), so the credit is `amount` or 0 and the
      *      `spent <= limit` invariant is preserved. The external token call sits between
-     *      check and record; that is safe because both entry points are `nonReentrant` and a
+     *      check and record, which is safe because both entry points are `nonReentrant` and a
      *      malicious `token` can only ever corrupt permission keys naming itself.
      */
     function _spend(address from, address to, euint64 amount, address token) private returns (euint64 transferred) {
@@ -665,7 +665,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         // The token computes over the handle during this call only.
         FHE.allowTransient(eTransferAmount, token);
         transferred = IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount);
-        // Reject a handle the token is not authorized on before it reaches `_recordSpend`; see
+        // Reject a handle the token is not authorized on before it reaches `_recordSpend`. See
         // {_isTokenAuthored} for why an unauthorized handle is a confidentiality leak, not a nuisance.
         if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
 
@@ -680,18 +680,18 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @dev Lenient sibling of {_spend} for {tryTransferFrom}: cleartext failures skip
-     *      instead of reverting. The try/catch is safe against a malicious token: a
+     *      instead of reverting. The try/catch is safe against a malicious token, because a
      *      reverting call rolls back its own effects, and reentrancy is blocked at the
      *      entry point.
      *
      *      NOT everything rolls back on a skip, though. Only SPEND ACCOUNTING is conditional on the
-     *      token call succeeding: {_evaluatePermissions} has already run, and its permission
-     *      maintenance persists even when the catch branch fires: expired entries stay pruned
-     *      (swap-and-pop, so surviving entries may have moved), a crossed period boundary stays
-     *      reset with `lastUpdated` restamped and {PermissionReset} emitted, and an emptied key
-     *      stays unlisted from {getGrantedPairs}. On the strict paths a revert unwinds all of it;
-     *      here it commits. None of it is harmful (the same maintenance would happen on the next
-     *      successful spend), but it does mean a spender can drive it without moving funds, which
+     *      token call succeeding. {_evaluatePermissions} has already run, and its permission
+     *      maintenance persists even when the catch branch fires. Expired entries stay pruned
+     *      by swap-and-pop, so surviving entries may have moved. A crossed period boundary stays
+     *      reset with `lastUpdated` restamped and {PermissionReset} emitted. An emptied key
+     *      stays unlisted from {getGrantedPairs}. On the strict paths a revert unwinds all of it.
+     *      Here it commits. None of it is harmful, since the same maintenance would happen on the next
+     *      successful spend, but it does mean a spender can drive it without moving funds, which
      *      is why owner-facing writes address permissions by id (see {_findPermission}).
      */
     function _trySpend(address from, address to, euint64 amount, address token) private returns (bool) {
@@ -704,12 +704,12 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         FHE.allowTransient(eTransferAmount, token);
         try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
-            // This one reverts the whole batch; every other failure in this function is skipped.
+            // This one reverts the whole batch. Every other failure in this function is skipped.
             // The skips are cleartext preconditions the caller can fix: no permission window, no
             // operator grant. A handle the token is not authorized on is different in kind. No
             // conforming ERC-7984 can produce one (OZ's `_update` ends with
             // `FHE.allowThis(transferred)`), so it is evidence that the counterparty is hostile
-            // rather than merely unusable.
+            // rather than only unusable.
             //
             // `token` is caller-supplied per item, so skipping would mean settling unrelated payers
             // in the same transaction as a contract already caught lying about its return value, on
@@ -718,7 +718,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             // obvious only after someone exploits it. Reverting also unwinds the transfer this call
             // just made, which a skip cannot.
             //
-            // The cost is one-sided: a single hostile token kills the honest items beside it.
+            // The cost is one-sided. A single hostile token kills the honest items beside it.
             // Screen tokens before batching, or submit suspect ones in their own call.
             if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
             _recordSpend(from, token, msg.sender, transferred);
@@ -734,15 +734,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     /**
      * @dev First pass: prune expired permissions, lazily reset elapsed periods, and
      *      AND together every active permission's "does the requested amount fit".
-     *      Never reverts on "nothing active"; callers decide (strict paths revert
-     *      `NoPermissions`, {_trySpend} skips). When `anyActive` is false, `permitted`
+     *      Never reverts on "nothing active". Callers decide, with strict paths reverting
+     *      `NoPermissions` and {_trySpend} skipping. When `anyActive` is false, `permitted`
      *      is uninitialized and MUST NOT be used.
      *
-     *      The fit check must not underflow: FHE arithmetic WRAPS, so the naive
-     *      `amount <= limit - spent` turns `spent > limit` (possible after a limit
-     *      decrease) into an almost-unlimited budget. Instead:
+     *      The fit check must not underflow. FHE arithmetic WRAPS, so the naive
+     *      `amount <= limit - spent` turns `spent > limit`, possible after a limit
+     *      decrease, into an almost-unlimited budget. Instead:
      *      `amount <= limit && spent <= limit - amount`, which is equivalent to
-     *      `spent + amount <= limit` and never wraps in a way that matters: when
+     *      `spent + amount <= limit` and never wraps in a way that matters. When
      *      `amount > limit` the second operand's wrap is discarded by the AND.
      */
     function _evaluatePermissions(
@@ -779,15 +779,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         }
 
         // Keep the enumeration invariant if the prune emptied the array. On strict
-        // paths a NoPermissions revert rolls this back together with the prune; on
+        // paths a NoPermissions revert rolls this back together with the prune. On
         // the lenient path both persist.
         if (permissions.length == 0) _untrackPair(user, token, spender);
     }
 
     /**
      * @dev Second pass: credit `transferredAmount` to every active permission and stamp
-     *      `lastUpdated`. Runs after the token call; the array cannot have changed in
-     *      between (nonReentrant, and other writers are keyed by msg.sender). Writes are
+     *      `lastUpdated`. Runs after the token call. The array cannot have changed in
+     *      between, since the function is nonReentrant and other writers are keyed by msg.sender. Writes are
      *      identical for permitted and denied spends (adding an encrypted zero), which
      *      is what keeps denied attempts indistinguishable on-chain.
      */
@@ -797,7 +797,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint256 len = permissions.length; // stable here: no prune/pop on this path
         for (uint256 i = 0; i < len; ) {
             Permission storage permission = permissions[i];
-            // Mirror _evaluatePermissions' active set: expired ones were pruned there,
+            // Mirror _evaluatePermissions' active set. Expired ones were pruned there,
             // not-yet-started ones were excluded from the check so must not be touched.
             if (nowTs >= permission.startTime) {
                 euint64 newSpent = FHE.add(permission.spent, transferredAmount);
@@ -835,21 +835,21 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @dev Could `token` have computed `handle`? {FHEUtils-isAuthoredBy} is the general check and
-     *      explains the mechanism; what follows is why THIS contract cannot skip it.
+     *      explains the mechanism. What follows is why THIS contract cannot skip it.
      *
      *      `token` is a caller-supplied address, and this contract calls `FHE.allowThis` on every
      *      user's `limit` and `spent`, so it is permanently authorized on all of them, and those
      *      handles are public, returned by {getPermission} and emitted in {PermissionSet}. An
      *      attacker registers a permission on a token they wrote, has it return a victim's `limit`
-     *      handle, and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)` (which passes
-     *      because WE are allowed on both), then grants the sum to the attacker, who knows their own
-     *      `spent` and subtracts it. {permitTransferFrom} is more direct still: it forwards the
+     *      handle, and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)`, which passes
+     *      because WE are allowed on both, then grants the sum to the attacker, who knows their own
+     *      `spent` and subtracts it. {permitTransferFrom} is more direct still. It forwards the
      *      returned handle straight to `msg.sender` via `allowTransient`, which a contract caller
      *      persists.
      *
-     *      Uninitialized is rejected for a second reason here: such a handle would revert inside
+     *      Uninitialized is rejected for a second reason here. Such a handle would revert inside
      *      `_recordSpend`'s `FHE.add` anyway, and that revert sits in the lenient path's success
-     *      branch, where it would surface as an uncontrolled failure rather than the deliberate
+     *      branch, where it would show up as an uncontrolled failure rather than the deliberate
      *      escalation at the call site.
      */
     function _isTokenAuthored(address token, euint64 handle) private view returns (bool) {
@@ -909,7 +909,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      happens before any ciphertext import, and because holding the three resolved values
      *      inline alongside the rest of `updatePermission` overflows the stack.
      *
-     *      A permission must come out of an update live or future-dated; expiring one is
+     *      A permission must come out of an update live or future-dated. Expiring one is
      *      {invalidatePermission}'s job. Re-submitting the SAME value is not a change, so a wallet
      *      echoing back a full record cannot silently refresh the budget.
      */
@@ -933,14 +933,14 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @dev Resolve a permission by its stable id. Owner-facing writes address permissions this way
-     *      because an ARRAY INDEX is not something the owner controls: any spender can move it.
+     *      because an ARRAY INDEX is not something the owner controls, since any spender can move it.
      *
      *      `_evaluatePermissions` swap-and-pops expired entries, and a spender reaches that prune
-     *      with a `tryTransferFrom` carrying an encrypted zero: no funds move, and it does not even
+     *      with a `tryTransferFrom` carrying an encrypted zero. No funds move, and it does not even
      *      need an active permission, because the prune runs before `anyActive` is decided and the
      *      lenient path returns instead of reverting, so the reorder commits. A spender watching the
      *      mempool could therefore front-run the owner's revocation and make it revert on a stale
-     *      index. The payoff is narrow but real: a spender sitting at `spent == limit` with a period
+     *      index. The payoff is narrow but real. A spender sitting at `spent == limit` with a period
      *      boundary approaching survives to the next `_resetIfNewPeriod` and buys a further full
      *      limit. Each expired entry is consumable once, but a hoarded short-`endTime` `PermitGrant`
      *      reloads the magazine.
@@ -968,7 +968,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         _grantedPairIndex[user][pairKey] = _grantedPairs[user].length; // index + 1
     }
 
-    /// @dev Swap-and-pop (token, spender) out of `user`'s enumeration; no-op if absent.
+    /// @dev Swap-and-pop (token, spender) out of `user`'s enumeration. No-op if absent.
     function _untrackPair(address user, address token, address spender) private {
         bytes32 pairKey = keccak256(abi.encodePacked(token, spender));
         uint256 indexPlusOne = _grantedPairIndex[user][pairKey];

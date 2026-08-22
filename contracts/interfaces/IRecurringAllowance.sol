@@ -10,24 +10,24 @@ import {euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
  *         permissions over an ERC-7984 confidential token on the Zama FHEVM.
  * @dev ERC-7984 compliance alone is NOT sufficient. The standard treats confidential amounts as
  *      opaque `bytes32` pointers and leaves their resolution implementation-specific (FHE,
- *      zero-knowledge, enclaves, …); this contract requires Zama `euint64` handles, the FHEVM ACL
+ *      zero-knowledge, enclaves, …). This contract requires Zama `euint64` handles, the FHEVM ACL
  *      and coprocessor-issued input proofs, and it operates on handles the token returns, so the
  *      token must live in the same FHEVM deployment.
  */
 interface IRecurringAllowance {
     /**
-     * @dev One spending permission. Amounts are encrypted (`euint64`); the time
+     * @dev One spending permission. Amounts are encrypted (`euint64`). The time
      *      fields are cleartext, so the *shape* of a permission (its period and
      *      window) is public while its size stays private.
      *
-     *      The period grid is anchored at `startTime`: period `n` covers
+     *      The period grid is anchored at `startTime`, so period `n` covers
      *      `[startTime + n*duration, startTime + (n+1)*duration)`. `spent` counts
      *      the current period only and is reset (lazily, on the next spend) when a
      *      period boundary is crossed.
      */
     struct Permission {
         /// @dev Stable identifier, unique across all users. Indices shift (swap-and-pop),
-        ///      ids never do; state-changing calls that take an index also take the id.
+        ///      ids never do. State-changing calls that take an index also take the id.
         uint256 id;
         /// @dev Encrypted per-period spending limit.
         euint64 limit;
@@ -35,8 +35,8 @@ interface IRecurringAllowance {
         euint64 spent;
         /// @dev Last time `spent` was written (spend attempt or period reset).
         ///      Invariant: `startTime <= lastUpdated`. Once the permission has started it
-        ///      also holds `lastUpdated <= block.timestamp`; while still future-dated it
-        ///      equals `startTime` (which is itself in the future).
+        ///      also holds `lastUpdated <= block.timestamp`. While still future-dated it
+        ///      equals `startTime`, which is itself in the future.
         uint64 lastUpdated;
         /// @dev Unix timestamp the permission (and its period grid) starts at.
         uint64 startTime;
@@ -44,7 +44,7 @@ interface IRecurringAllowance {
         ///      is active while `block.timestamp <= endTime`.
         uint64 endTime;
         /// @dev Period length in seconds. `type(uint64).max` means the spent amount
-        ///      never resets (a one-shot budget for the whole window).
+        ///      never resets, a one-shot budget for the whole window.
         uint64 duration;
     }
 
@@ -79,18 +79,18 @@ interface IRecurringAllowance {
         uint64 startTime;
         uint64 endTime;
         /// @dev Unordered nonce (see {UnorderedNonces}). PermitGrant and PermitSpend draw
-        ///      from the SAME per-owner nonce space; allocate from one shared sequence.
+        ///      from the SAME per-owner nonce space. Allocate from one shared sequence.
         uint256 nonce;
-        /// @dev Signature expiry: the permit cannot be submitted after this timestamp.
+        /// @dev Signature expiry. The permit cannot be submitted after this timestamp.
         uint256 sigDeadline;
     }
 
     /**
      * @dev Signed authorization for a ONE-SHOT transfer up to an encrypted cap (the
      *      "confidential cheque"). Consumed on any SUCCESSFUL submission regardless of the
-     *      encrypted outcome: a cheque against an insufficient (but initialized) balance still
+     *      encrypted outcome, so a cheque against an insufficient but initialized balance still
      *      burns its nonce. A token that REVERTS instead of returning an encrypted zero rolls the
-     *      nonce back with it, leaving the cheque submittable until `sigDeadline`; see
+     *      nonce back with it, leaving the cheque submittable until `sigDeadline`. See
      *      {RecurringAllowance-permitTransferFrom}.
      */
     struct PermitSpend {
@@ -98,10 +98,10 @@ interface IRecurringAllowance {
         address spender;
         /// @dev Handle of the encrypted cap (an `externalEuint64`), proof bound to `spender`.
         bytes32 capHandle;
-        /// @dev Bound recipient; address(0) lets the spender choose at execution.
+        /// @dev Bound recipient. address(0) lets the spender choose at execution.
         address to;
         /// @dev Unordered nonce (see {UnorderedNonces}). Shares the per-owner nonce space
-        ///      with PermitGrant; allocate from one shared sequence.
+        ///      with PermitGrant. Allocate from one shared sequence.
         uint256 nonce;
         uint256 sigDeadline;
     }
@@ -136,7 +136,7 @@ interface IRecurringAllowance {
     error SignatureExpired(uint256 sigDeadline);
     /// @dev The signature does not verify for the claimed owner (ECDSA or ERC-1271).
     error InvalidSigner();
-    /// @dev A permit must be submitted by the spender it names (its proof binds them anyway).
+    /// @dev A permit must be submitted by the spender it names, and its proof binds them anyway.
     error SpenderMismatch();
     /// @dev The permit binds a recipient and `to` differs from it.
     error RecipientMismatch();
@@ -145,7 +145,7 @@ interface IRecurringAllowance {
     ///      ciphertext into the caller's own decryptable state.
     error InvalidReturnedHandle();
     /// @dev A permission-creating call was given an empty `inputProof`. Creation always needs a
-    ///      real proof so the coprocessor type-checks the limit as `Uint64`; only
+    ///      real proof so the coprocessor type-checks the limit as `Uint64`. Only
     ///      {RecurringAllowance-updatePermission} reads an empty proof as "leave the limit alone".
     error MissingInputProof();
 
@@ -198,7 +198,7 @@ interface IRecurringAllowance {
     event PermitEpochIncremented(address indexed owner, uint256 newEpoch);
 
     /// @notice A spend was executed through the allowance. `transferred` is the encrypted
-    ///         amount actually moved; an observer cannot tell a denied spend (0) from a
+    ///         amount moved. An observer cannot tell a denied spend (0) from a
     ///         permitted one. `from`/`to` are already public in the token's own
     ///         `ConfidentialTransfer` event, so this adds no new leak.
     event AllowanceTransfer(
@@ -209,8 +209,8 @@ interface IRecurringAllowance {
         euint64 transferred
     );
 
-    /// @notice A {tryTransferFrom} item was skipped for a cleartext reason (encrypted
-    ///         denials are NOT skips; they execute and transfer an encrypted zero).
+    /// @notice A {tryTransferFrom} item was skipped for a cleartext reason. Encrypted
+    ///         denials are NOT skips. They execute and transfer an encrypted zero.
     event TransferSkipped(
         address indexed from,
         address indexed to,
@@ -271,10 +271,10 @@ interface IRecurringAllowance {
     /// @notice Current permit epoch for `owner`, mixed into every permit digest.
     function permitEpoch(address owner) external view returns (uint256);
 
-    /// @notice Spend `from`'s allowance: move up to encrypted `amount` of `token` to `to`
+    /// @notice Spend `from`'s allowance, moving up to encrypted `amount` of `token` to `to`
     ///         if every active permission for (from, token, msg.sender) allows it. A denied
     ///         spend moves an encrypted zero instead of reverting.
-    /// @return transferred Encrypted amount actually moved (transiently ACL'd to the caller).
+    /// @return transferred Encrypted amount moved (transiently ACL'd to the caller).
     function transferFrom(
         address from,
         address to,
@@ -286,14 +286,14 @@ interface IRecurringAllowance {
     /// @notice Atomic batch {transferFrom}: any cleartext revert reverts the whole batch.
     function transferFrom(TransferDetails[] calldata transfers) external;
 
-    /// @notice Lenient batch {transferFrom} for processors: items that fail a cleartext
+    /// @notice Lenient batch {transferFrom} for processors. Items that fail a cleartext
     ///         precondition are skipped ({TransferSkipped}) rather than reverting the batch.
-    /// @return executed Per-item flag: true if the token transfer was executed (its
-    ///         encrypted outcome may still be zero).
+    /// @return executed Per-item flag. True if the token transfer was executed, even if its
+    ///         encrypted outcome is zero.
     function tryTransferFrom(TransferDetails[] calldata transfers) external returns (bool[] memory executed);
 
-    /// @notice Create a permission from `owner`'s off-chain {PermitGrant} signature (the
-    ///         gasless-grant flow: the named spender submits and pays gas).
+    /// @notice Create a permission from `owner`'s off-chain {PermitGrant} signature, the
+    ///         gasless-grant flow, where the named spender submits and pays gas.
     /// @return permissionId Stable id of the new permission.
     function permitSetPermission(
         address owner,
@@ -303,8 +303,8 @@ interface IRecurringAllowance {
     ) external returns (uint256 permissionId);
 
     /// @notice Execute an `owner`-signed one-shot transfer up to a signed encrypted cap (a
-    ///         "confidential cheque"); over-cap requests move an encrypted zero, obliviously.
-    /// @return transferred Encrypted amount actually moved (transiently ACL'd to the caller).
+    ///         "confidential cheque"). Over-cap requests move an encrypted zero, obliviously.
+    /// @return transferred Encrypted amount moved (transiently ACL'd to the caller).
     function permitTransferFrom(
         address owner,
         PermitSpend calldata permit,
@@ -316,7 +316,7 @@ interface IRecurringAllowance {
     ) external returns (euint64 transferred);
 
     /// @notice Permission at `permissionIndex` for the key. Indices are NOT stable across
-    ///         writes (swap-and-pop); re-address by the returned `id`.
+    ///         writes (swap-and-pop). Re-address by the returned `id`.
     function getPermission(
         address user,
         address token,
@@ -335,8 +335,8 @@ interface IRecurringAllowance {
     /// @notice Number of permissions stored for the (user, token, spender) key.
     function getPermissionCount(address user, address token, address spender) external view returns (uint256);
 
-    /// @notice How many permissions a spend against the key would evaluate right now (excludes
-    ///         expired and not-yet-started entries): the count that drives its FHE cost. Use it to
+    /// @notice How many permissions a spend against the key would evaluate right now, excluding
+    ///         expired and not-yet-started entries, which is the count that drives its FHE cost. Use it to
     ///         size `transferFrom`/`tryTransferFrom` batches against the per-transaction budget.
     function activePermissionCount(
         address user,

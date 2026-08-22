@@ -13,9 +13,9 @@ import {BatchedStealthWrapAdapter} from "../adapters/BatchedStealthWrapAdapter.s
  *      must therefore be wrappable under the same handle.
  *
  *      DEPOSITS MADE THROUGH AN ADAPTER LIKE THIS ARE PUBLICLY LINKABLE BY RECIPIENT. That is not a
- *      regression: the payer's clear ERC-20 transfer to the public deposit address already clusters
+ *      regression, because the payer's clear ERC-20 transfer to the public deposit address already clusters
  *      them before `initWrap` runs, so single-use would forbid the reuse without concealing anything.
- *      What it would cost is the recovery path; see the hook's docs for why re-wrapping under a
+ *      What it would cost is the recovery path. See the hook's docs for why re-wrapping under a
  *      fresh handle can be neither authenticated nor made safe, leaving a cleartext sweep that
  *      doxxes the first deposit. Do not point a flow needing unlinkability at this shape.
  */
@@ -26,7 +26,7 @@ contract MockReusableHandleAdapter is BatchedStealthWrapAdapter {
         IERC7984ERC20Wrapper confidentialWrapper_
     ) BatchedStealthWrapAdapter(maxBatchDeposits_, sealDelay_, confidentialWrapper_) {}
 
-    /// @dev Reuse permitted. Still recorded, so `recipientHandleUsed` reports history honestly; the
+    /// @dev Reuse permitted. Still recorded, so `recipientHandleUsed` reports history honestly. The
     ///      repeat itself is already public in `WrapInitiated`, so no extra event is warranted.
     function _consumeRecipientHandle(bytes32 handle) internal override {
         _recordRecipientHandle(handle);

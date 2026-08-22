@@ -101,14 +101,14 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     const { contract: wrapper } = await deployWrapper(4n);
     await fundAndApprove(wrapper, alice, 2n);
 
-    // Only 2 of 4 slots ever fill; without sealing, the batch could never finalize.
+    // Only 2 of 4 slots ever fill. Without sealing, the batch could never finalize.
     await initWrap(wrapper, alice, alice.account.address);
     await initWrap(wrapper, alice, alice.account.address);
     expect(await wrapper.read.batchClosed([0n])).toBe(false);
 
     await warpTime(SEAL_DELAY + 1n);
-    // sealBatch is a state-changing write whose gas tevm under-estimates (the reentrancy-guard
-    // SSTOREs tip it into a silent OOG), so send with an explicit gas limit like the FHE calls.
+    // sealBatch is a state-changing write whose gas tevm under-estimates, since the reentrancy-guard
+    // SSTOREs tip it into a silent OOG, so send with an explicit gas limit like the FHE calls.
     const sealReceipt = await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
     const [sealed] = parseEventLogs({
       abi: wrapper.abi,

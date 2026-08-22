@@ -59,7 +59,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     const remaining = await allowance.read.getGrantedPairAt([user, 0n]);
     expect(getAddress(remaining.spender)).toBe(getAddress(carol.account.address));
 
-    // Lockdown unlists too; re-granting lists again.
+    // Lockdown unlists too. Re-granting lists again.
     await S.sendOk(allowance.write.lockdown([
       [
         {
@@ -85,7 +85,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
   });
 
   // Batch cost is the sum over items and one payer's tiers move the ceiling for everyone else, so
-  // processors need the count a spend would actually evaluate, not the stored count.
+  // processors need the count a spend would evaluate, not the stored count.
   it("counts only the permissions a spend would evaluate", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob } = H.wallets;
@@ -217,7 +217,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
       alice, bob, carol, signer: dave
     } = H.wallets;
 
-    // alice fully set up; dave granted a permission but NEVER set the operator.
+    // alice fully set up. Dave granted a permission but NEVER set the operator.
     await S.fundUser(alice, 10_000n);
     await S.setPermission({
       user: alice,

@@ -3,8 +3,8 @@
  *
  * The batched wrapper tests are split across several *.mock.test.ts files so vitest can run them on
  * separate workers (see vitest.config.ts). Each file calls `useBatchedSuite()` at the top
- * level: it registers the per-file `beforeAll`/`beforeEach` (one FHEVM env + MockUSDC,
- * snapshotted then restored each test) and returns the bound `boot()` those tests already use.
+ * level. It registers the per-file `beforeAll`/`beforeEach`, one FHEVM env + MockUSDC
+ * snapshotted then restored each test, and returns the bound `boot()` those tests already use.
  */
 import { beforeAll, beforeEach } from "vitest";
 import { zeroHash } from "viem";
@@ -27,8 +27,8 @@ type ConfidentialWrapperContract = Awaited<ReturnType<typeof getOrDeployMockERC7
 
 /** Register the per-file harness (once per file) and return the `boot()` helper factory. */
 export function useBatchedSuite () {
-  // One environment per file: the FHEVM runtime + a shared MockUSDC are installed once and
-  // snapshotted; `beforeEach` restores that snapshot in ~ms.
+  // One environment per file. The FHEVM runtime + a shared MockUSDC are installed once and
+  // snapshotted. `beforeEach` restores that snapshot in ~ms.
   let H: Harness;
   let underlying: MockUSDCContract;
   let confidentialWrapper: ConfidentialWrapperContract;
@@ -67,7 +67,7 @@ export function useBatchedSuite () {
     const { deployer } = wallets;
 
     // FHE calls (fheTxOpts) carry an explicit gas limit, so viem skips simulation and an
-    // on-chain revert lands as a receipt instead of a throw; check status so a failed
+    // on-chain revert lands as a receipt instead of a throw. Check status so a failed
     // deposit/finalize surfaces immediately rather than corrupting later assertions.
     const send = async (p: Promise<`0x${string}`>) => {
       const receipt = await publicClient.waitForTransactionReceipt({ hash: await p });

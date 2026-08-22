@@ -9,4 +9,4 @@ the limit again, roughly 2x one period around a single transaction, on top of th
 PERIOD GRID note describes for a natural rollover.
 
 To tighten a live permission, prefer `invalidatePermission`/`lockdown` and re-grant, or lower only
-the `limit` (a limit-only update keeps `spent` and blocks further spending immediately).
+the `limit`, since a limit-only update keeps `spent` and blocks further spending immediately.

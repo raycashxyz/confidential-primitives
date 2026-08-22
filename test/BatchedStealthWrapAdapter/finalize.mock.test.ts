@@ -1,7 +1,7 @@
 /**
  * BatchedStealthWrapAdapter: finalizeWrap correctness (gating, no-double-spend via the encrypted
  * claimed accumulator, per-recipient scan). Retry-safety against a soft-failing wrapper lives in the
- * sibling *.retry-safety file; multi-batch + scale cases in *.finalize-scale.
+ * sibling *.retry-safety file. Multi-batch + scale cases in *.finalize-scale.
  */
 import {
   describe, it, expect
@@ -70,14 +70,14 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     const afterFirst = await decryptBalance(alice);
     expect(afterFirst).toBe(AMOUNT * 2n);
 
-    // No cleartext nullifier: a replay does not revert, but `owed` is now zero so it delivers
+    // A replay does not revert, since there is no cleartext nullifier, but `owed` is now zero so it delivers
     // nothing. The accumulator, not a boolean, is what stops the double-pay.
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
     expect(await decryptBalance(alice)).toBe(afterFirst); // unchanged
   });
 
   // `ids` and `recipient` are both visible in the mempool. The old all-or-nothing nullifier let a
-  // front-run of one batch revert the whole multi-batch call; the accumulator makes an
+  // front-run of one batch revert the whole multi-batch call. The accumulator makes an
   // already-claimed batch contribute an encrypted zero instead, so the original call still lands.
   it("a front-run of one batch does not break the multi-batch finalize", async () => {
     const {
@@ -88,7 +88,7 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     await fundAndApprove(wrapper, alice, 4n);
     for (let i = 0; i < 4; i++) await initWrap(wrapper, alice, alice.account.address); // batches 0, 1
 
-    // The front-run: a third party claims batch 0 for alice. She still receives the money.
+    // The front-run. A third party claims batch 0 for alice. She still receives the money.
     await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(bob.account)));
     expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
 

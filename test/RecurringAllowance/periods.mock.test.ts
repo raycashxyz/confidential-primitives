@@ -45,7 +45,7 @@ describe("RecurringAllowance: periods and security regressions", () => {
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(900n);
     expect(await S.balanceOf(carol)).toBe(1500n);
 
-    // startTime is the immutable grid anchor; resets never move it
+    // startTime is the immutable grid anchor. Resets never move it
     const after = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(after.startTime).toBe(startTime);
   });
@@ -119,8 +119,8 @@ describe("RecurringAllowance: periods and security regressions", () => {
 
     await H.warpTime(10_000n);
 
-    // Past endTime the spend reverts NoPermissions (the revert also rolls back the prune,
-    // so the expired entry stays until a successful write prunes it).
+    // Past endTime the spend reverts NoPermissions. The revert also rolls back the prune,
+    // so the expired entry stays until a successful write prunes it.
     await expect(S.spend({
       spender: bob,
       from: alice.account.address,
@@ -131,8 +131,8 @@ describe("RecurringAllowance: periods and security regressions", () => {
   });
 
   // REGRESSION (critical finding): FHE arithmetic wraps, so the original
-  // `amount <= limit - spent` check turned "spent > limit" (reachable by lowering the
-  // limit mid-period) into a near-unlimited budget: remaining wrapped to ~2^64.
+  // `amount <= limit - spent` check turned "spent > limit", reachable by lowering the
+  // limit mid-period, into a near-unlimited budget, with remaining wrapped to ~2^64.
   it("denies spending when the limit is lowered below the amount already spent", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;
@@ -168,7 +168,7 @@ describe("RecurringAllowance: periods and security regressions", () => {
       0n
     ], fheTxOpts(alice.account)));
 
-    // Pre-fix these would drain: remaining wrapped to 2^64 - 50.
+    // Pre-fix these would drain, with remaining wrapped to 2^64 - 50.
     await doSpend(60n); // over the new limit
     await doSpend(40n); // under the new limit but spent (100) already exceeds it
     await doSpend(9000n); // the drain attempt
