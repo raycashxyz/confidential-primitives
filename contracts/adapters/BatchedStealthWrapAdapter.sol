@@ -17,7 +17,7 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
  *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
  *
- *         THAT HOLDS AGAINST OBSERVERS, NOT AGAINST CO-DEPOSITORS. The batch hides a deposit only
+ *         The batch hides a deposit only
  *         among slots the adversary cannot rule out. Someone who deposited into the same batch
  *         knows their own encrypted recipients, so they subtract those slots and what remains is
  *         the real anonymity set; own enough of a batch and it collapses to one. With
@@ -27,15 +27,15 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         deposits are sender-transparent: inspect who is already in a batch, pin it, and judge
  *         whether the crowd is real.
  *
- *         REPLAY GUARD IS AN ENCRYPTED LEDGER, NOT A BOOL. Each batch tracks, per recipient, an
+ *         REPLAY GUARD: AN ENCRYPTED PER-RECIPIENT LEDGER. Each batch tracks, per recipient, an
  *         encrypted `claimed` total; {finalizeWrap} pays `matched - claimed` and credits back only
  *         what the wrapper reports it actually moved. So `claimed` can never exceed a recipient's
  *         matched sum (no double-spend), and a soft-failed or partial transfer leaves the remainder
  *         claimable instead of destroying it — the adapter needs no exact-or-revert wrapper on the
  *         finalize path (the continuous adapter, which consumes deposits by zeroing them, still
- *         does; see its docs). The cost of dropping the old cleartext nullifier: a redundant
- *         finalize of a fully-claimed batch no longer reverts, it just pays an encrypted zero — log
- *         noise, throttled by paying for the scan, and the amount was always opaque anyway.
+ *         does; see its docs). A redundant finalize of a fully-claimed batch does not revert: it
+ *         pays an encrypted zero. That is log noise, throttled by having to pay for the scan, and
+ *         the amount was opaque either way.
  *
  *         The payout sum is tree-reduced via {_sumTree}. Pairwise reduction keeps the
  *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
@@ -251,10 +251,20 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *      the recipient's, leaving the victim's deposit identifiable. Pinning turns that into a
      *      revert, so the depositor keeps their funds and can reassess.
      *
-     *      THIS DOES NOT MAKE THE BATCH SAFE. It fixes displacement only; nothing stops an attacker
+     *      It fixes displacement only; nothing stops an attacker
      *      from co-depositing into the batch you pinned. An anonymity set is only as good as the
-     *      share of it you do not control, and with `maxBatchDeposits` at most 48 it is cheap to
-     *      own most of one. What helps is that this adapter is SENDER-TRANSPARENT: depositor and
+     *      share of it you do not control, and with `maxBatchDeposits` at most 48 the slots are few
+     *      enough to buy.
+     *
+     *      Buying them is not the hard part, though — knowing whose deposit to buy them around is.
+     *      The attacker learns nothing from the batch itself: every recipient in it is encrypted, so
+     *      filling slots blind costs gas plus capital locked until finalize and identifies nobody.
+     *      The attack needs a target picked BEFORE the deposit lands, which means an off-chain link
+     *      from a cleartext depositor in {WrapInitiated} to the payment worth deanonymising. Read
+     *      the cost accordingly: cheap against a depositor already worth watching, pointless as a
+     *      dragnet.
+     *
+     *      What helps is that this adapter is SENDER-TRANSPARENT: depositor and
      *      amount are cleartext in {WrapInitiated}, so a batch dominated by freshly funded
      *      addresses is visible BEFORE you join it. Pin the batch you actually inspected, and treat
      *      "who else is in here" as a decision the client must make, not one the contract makes.
@@ -309,6 +319,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         // re-finalizing a batch observers have already watched settle, which is exactly the linkage
         // the batch was supposed to hide.
         if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
+        // A batch is append-only and never has holes — deposits occupy `[0, fillCount)` and nothing
+        // removes one, so the next free index IS the count. A partially filled batch that seals
+        // stops growing rather than leaving gaps, which is why `getDepositsLength` is a bound over
+        // sparse GLOBAL slots while this per-batch index stays contiguous.
         uint256 batchIndex = batch.fillCount;
 
         // Persist access to BOTH stored ciphertexts. `_wrapIntoEscrow` already allows the amount on
