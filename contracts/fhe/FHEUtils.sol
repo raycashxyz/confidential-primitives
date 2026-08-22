@@ -10,8 +10,8 @@ import {FheType} from "@fhevm/solidity/lib/FheType.sol";
  * @author Valerio Leo (@valeriohq)
  * @notice Helpers for fhEVM contracts that handle ciphertexts they did not create.
  *
- *         An ADDITION to fhevm-solidity, not a replacement: it holds only what that library does
- *         not, so import both. Sections below are INPUTS, PROVENANCE and REDUCTIONS.
+ *         Extends fhevm-solidity with what that library leaves to the caller; import both. Sections
+ *         below are INPUTS, PROVENANCE and REDUCTIONS.
  *
  *         VERSION COUPLING. {fromExternal} depends on the BEHAVIOUR of `FHEVMExecutor.verifyInput`
  *         — that it grants ACL access to its own `msg.sender` and to no one else — not merely on its
@@ -37,7 +37,8 @@ library FHEUtils {
      *
      *      Passing the expected {FheType} also closes `FHE.fromExternal`'s empty-proof branch, which
      *      returns a handle VERBATIM after only an ACL check and lets a caller land a handle of any
-     *      type in a typed slot. Here a mismatch reverts `InvalidType` at the coprocessor.
+     *      type in a typed slot. Here a mismatch reverts `InvalidType` at the coprocessor, and an
+     *      empty proof reverts `EmptyInputProof` at the input verifier.
      *
      *      The proof binding is UNCHANGED: `user` is still verified against the proof, so the
      *      ciphertext stays submittable only by the party it was issued to. Pass `msg.sender` unless
@@ -72,22 +73,28 @@ library FHEUtils {
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Whether `author` could have produced `handle` — the check to run on any ciphertext an
-     *      untrusted contract HANDS BACK to you.
+     * @dev Whether `author` is ACL-authorized on `handle`, which is the check to run on any ciphertext
+     *      an untrusted contract HANDS BACK to you.
      *
      *      Handles are global rather than namespaced per contract, so a hostile callee can return a
      *      handle belonging to somebody else entirely: one it read from a public getter or an event.
      *      Folding that into your own state and then granting it to a caller launders a third party's
      *      ciphertext into a value that caller can decrypt.
      *
-     *      A contract is always ACL-authorized on a value it actually computed, and cannot grant
-     *      itself access to one it did not, so `isAllowed(handle, author)` separates the two. The
-     *      initialization check rejects the zero handle, which no computation returns. This is the
-     *      mirror of the check fhEVM tokens apply to amounts handed IN (OpenZeppelin's
-     *      `ERC7984UnauthorizedUseOfEncryptedAmount`).
+     *      A contract is always authorized on a value it computed, and cannot grant itself access to
+     *      one it did not, so `isAllowed(handle, author)` separates the two. The guarantee is
+     *      precisely "anything that passes is something the callee could already read", which is
+     *      the bar that matters: a callee cannot launder a handle it holds no access to, and one it
+     *      does hold access to (including any you granted it transiently for the call) it could leak
+     *      by other means anyway. The initialization check rejects the zero handle, which no
+     *      computation returns. This is the mirror of the check fhEVM tokens apply to amounts handed
+     *      IN (OpenZeppelin's `ERC7984UnauthorizedUseOfEncryptedAmount`).
      *
-     *      A `false` result means the callee is misbehaving, not that the call failed: decide
-     *      deliberately whether that is worth aborting for.
+     *      Two things it is not. It is not proof of unique authorship: trivially encrypted handles
+     *      are content-addressed with no sender in the preimage, so two contracts that trivially
+     *      encrypt the same plaintext share one handle and both pass (harmless, since a trivial
+     *      encryption carries no secret). And a `false` result means the callee is misbehaving, not
+     *      that the call failed: decide deliberately whether that is worth aborting for.
      */
     function isAuthoredBy(euint64 handle, address author) internal view returns (bool) {
         return FHE.isInitialized(handle) && FHE.isAllowed(handle, author);
@@ -111,9 +118,9 @@ library FHEUtils {
      *      pairwise keeps the critical path at ceil(log2 N) adds, which moves the binding limit back
      *      to total HCU.
      *
-     *      MUTATES `xs`, which is the point — it reduces into the same memory rather than allocating
-     *      a new array per level. Do not reuse the array afterwards. An empty input sums to a
-     *      trivially encrypted zero.
+     *      Reduces IN PLACE, into the same memory, rather than allocating a new array per level, so
+     *      `xs` is consumed: do not reuse it afterwards. An empty input sums to a trivially encrypted
+     *      zero, on which the caller holds only transient access.
      */
     function sum(euint64[] memory xs) internal returns (euint64) {
         uint256 n = xs.length;

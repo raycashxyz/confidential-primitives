@@ -32,20 +32,18 @@ import {FHEUtils} from "../../fhe/FHEUtils.sol";
  *         it with `FHE.allow` or publish it with `FHE.makePubliclyDecryptable` and read the recipient
  *         address the handshake conceals.
  *
- *         So {_verifyRecipient} does NOT call `FHE.fromExternal`. It imports the ciphertext through
- *         {_importRecipient}, which calls the coprocessor's `verifyInput` directly. That runs the
- *         identical proof check with the identical binding — `contractAddress` is the executor's
- *         caller (this adapter) and `userAddress` is the depositor — but the only ACL grant it makes
- *         is the executor's own `allowTransient(result, msg.sender)`, and there `msg.sender` is the
- *         adapter, not the depositor. The adapter then persists its access with `FHE.allowThis`; the
- *         depositor is named only inside the proof and is granted no ACL access to escalate. The
- *         proof is still bound to the depositor, so no third party can submit it — the property
- *         {_consumeRecipientHandle} depends on — and the recipient is concealed from a contract
+ *         So {_verifyRecipient} imports the ciphertext through {FHEUtils-fromExternal}, which calls
+ *         the coprocessor's `verifyInput` and stops there. The proof check and the binding are the
+ *         same (`contractAddress` is this adapter, `userAddress` is the depositor), and the only ACL
+ *         grant made is the executor's own, to this adapter. The adapter persists that access with
+ *         `FHE.allowThis`; the depositor is named inside the proof and receives nothing to escalate.
+ *         The proof stays bound to the depositor, so no third party can submit it (the property
+ *         {_consumeRecipientHandle} depends on), and the recipient is concealed from a contract
  *         depositor as well as from observers.
  *
- *         This is NOT a claim that the depositor can trust the recipient — see the next note. It is
- *         the narrower guarantee that submitting a well-formed deposit does not leak the recipient to
- *         whoever submitted it, contract or not.
+ *         That is the narrower guarantee that submitting a well-formed deposit does not leak the
+ *         recipient to whoever submitted it, contract or not. Whether the depositor can TRUST the
+ *         recipient is a separate question; see the next note.
  *
  *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. Importing the handle proves the
  *         ciphertext is well-formed and correctly bound; it says nothing about the ADDRESS inside.
@@ -143,20 +141,18 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *
      *      Two things happen, in order:
      *
-     *        1. An EMPTY `inputProof` is rejected outright. Every legitimate deposit carries a real
+     *        1. An EMPTY `inputProof` is rejected up front. Every legitimate deposit carries a real
      *           proof (the recipient encrypts their address bound to `(this, depositor)`), so this
-     *           rejects nothing valid while giving a clean, tested `MissingInputProof` revert.
-     *        2. The ciphertext is imported through {_importRecipient}, which calls the coprocessor's
-     *           `verifyInput` directly instead of `FHE.fromExternal`. That is the fix for the
-     *           depositor-ACL leak (see the DEPOSITOR TRUST note) and it also FORCES the handle to be
-     *           a `Uint160`, reverting `InvalidType` otherwise.
+     *           rejects nothing valid, and it gives the adapter's own `MissingInputProof` revert
+     *           before any external call.
+     *        2. The ciphertext is imported through {_importRecipient}, i.e. {FHEUtils-fromExternal}.
+     *           That grants ACL access to this adapter only (the DEPOSITOR TRUST note has the why)
+     *           and passes the expected `Uint160` type to the coprocessor, which reverts `InvalidType`
+     *           for anything else.
      *
-     *      That mandatory `Uint160` check is what keeps a hostile handle out of the pipeline.
-     *      `FHE.fromExternal` has an empty-proof branch that returns a handle VERBATIM after only an
-     *      ACL check, letting a caller smuggle a wrong-typed handle into the `eaddress` slot; three
-     *      attacks follow from that, and importing through `verifyInput` — which always verifies the
-     *      proof and rejects any non-`Uint160` handle at the coprocessor — closes all three, with the
-     *      empty-proof gate above as an explicit first line:
+     *      That mandatory `Uint160` check is what keeps a hostile handle out of the pipeline. Three
+     *      attacks follow from a wrong-typed handle reaching the `eaddress` slot, and the typed import
+     *      closes all of them at the coprocessor:
      *
      *        - a `Bool` handle. Scalar `FHE.eq(eaddress, address)` skips the operand type check, and
      *          an encrypted `true` then compares equal to EVERY non-zero recipient — one poisoned

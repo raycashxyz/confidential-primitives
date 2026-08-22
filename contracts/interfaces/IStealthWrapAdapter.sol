@@ -33,17 +33,16 @@ interface IStealthWrapAdapter {
     error InvalidId();
     /// @dev The finalize id set is not strictly ascending (unsorted or containing duplicates).
     error DuplicateId();
-    /// @dev A deposit entry point was called with an empty `inputProof` — `initWrap`, and any other
-    ///      an adapter exposes, such as the batched adapter's `initWrapInto`. Adapters require a real
-    ///      proof so the coprocessor type-checks the handle as `Uint160` — see
-    ///      {StealthWrapAdapter-_verifyRecipient}.
+    /// @dev A deposit entry point (`initWrap`, or any other an adapter exposes such as the batched
+    ///      adapter's `initWrapInto`) was called with an empty `inputProof`. Every legitimate deposit
+    ///      carries a proof, so this is rejected up front with the adapter's own error; the import
+    ///      itself would reject it anyway. See {StealthWrapAdapter-_verifyRecipient}.
     error MissingInputProof();
-    /// @dev This encrypted-recipient handle has already funded a deposit. Handles are single-use:
-    ///      reusing one publicly links the deposits. Ask the recipient for a fresh encryption.
-    /// @dev Single-use is the DEFAULT policy, not an invariant of the interface. A derived adapter
-    ///      whose deposit path already publishes the grouping — a CREATE2 deposit address keyed on
-    ///      the handle, where the payer's clear transfer to that address links the deposits before
-    ///      the wrap even runs — may override it and never raise this. See
+    /// @dev This encrypted-recipient handle has already funded a deposit. Handles are single-use by
+    ///      default, because reusing one publicly links the deposits; ask the recipient for a fresh
+    ///      encryption. A derived adapter whose deposit path already publishes the grouping (a CREATE2
+    ///      deposit address keyed on the handle, where the payer's clear transfer to that address
+    ///      links the deposits before the wrap runs) may permit reuse and never raise this. See
     ///      {StealthWrapAdapter-_consumeRecipientHandle}.
     error RecipientHandleAlreadyUsed();
 

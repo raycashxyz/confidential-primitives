@@ -2,16 +2,24 @@
 "@raycashxyz/confidential-primitives": minor
 ---
 
-`RecurringAllowance` now verifies the provenance of every handle a token returns.
+`RecurringAllowance` now verifies the provenance of every handle a token returns, and reverts
+`InvalidReturnedHandle` on every path when the check fails.
 
 Ciphertext handles are global rather than namespaced per token, and `token` is a caller-supplied
 address, so a malicious token could return any handle in place of its transfer result. Because this
-contract calls `FHE.allowThis` on every user's `limit` and `spent` — and those handles are public via
-`getPermission`/`PermissionSet` — the substituted handle was added into the attacker's own `spent`
-and then granted to them, making any user's encrypted limit or spend history decryptable by anyone.
+contract calls `FHE.allowThis` on every user's `limit` and `spent`, and those handles are public via
+`getPermission`/`PermissionSet`, the substituted handle was added into the attacker's own `spent` and
+then granted to them, making any user's encrypted limit or spend history decryptable by anyone.
 
-`_isTokenAuthored` now requires the returned handle to be initialized and ACL-authorized to the
-returning token, which an honestly-computed result always is (`ERC7984._update` ends with
-`FHE.allowThis(transferred)`). `transferFrom` and `permitTransferFrom` revert `InvalidReturnedHandle`;
-`tryTransferFrom` skips the item with the new `SkipReason.INVALID_RETURN_HANDLE` rather than taking
-down the batch.
+The returned handle must now be initialized and ACL-authorized to the returning token, which an
+honestly computed result always is (`ERC7984._update` ends with `FHE.allowThis(transferred)`). The
+check is `FHEUtils.isAuthoredBy`.
+
+`tryTransferFrom` reverts here too, rather than skipping the item. Every other lenient-path failure
+is a cleartext precondition the caller can fix (no permission window, no operator grant) and skipping
+those is the point of the function. An unauthorized return handle is different in kind: no conforming
+ERC-7984 can produce one, so it is evidence the counterparty is hostile, and `token` is supplied per
+item by the caller, so skipping would settle unrelated payers in the same transaction as a contract
+already caught lying about its return value. Reverting also unwinds the transfer that call had
+already made, which a skip could not. The trade is that one hostile token takes the honest items in
+its batch with it: screen tokens before batching, or submit suspect ones in their own call.

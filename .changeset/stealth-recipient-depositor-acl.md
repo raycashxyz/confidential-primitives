@@ -2,9 +2,10 @@
 "@raycashxyz/confidential-primitives": patch
 ---
 
-`StealthWrapAdapter._verifyRecipient` now imports the encrypted recipient through the coprocessor's
-`verifyInput` directly instead of `FHE.fromExternal`, so a deposit no longer leaks the recipient to
-the depositor. Both shipped adapters route through this one path, so both are fixed.
+`StealthWrapAdapter._verifyRecipient` now imports the encrypted recipient through
+`FHEUtils.fromExternal`, which calls the coprocessor's `verifyInput` directly instead of
+`FHE.fromExternal`, so a deposit no longer leaks the recipient to the depositor. Both shipped
+adapters route through this one path, so both are fixed.
 
 `FHE.fromExternal` expands to `Impl.verify`, which after the proof check runs
 `IACL.allowTransient(result, msg.sender)` — and inside `initWrap` that `msg.sender` is the depositor.

@@ -391,15 +391,14 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *         hook cost. Near the HCU cap, finalize one batch per call; multi-batch calls suit
      *         smaller batches.
      *
-     *         REPLAY / DOUBLE-SPEND. There is no cleartext nullifier. Each batch tracks an encrypted
-     *         `claimed[recipient]` (see {Batch}); a finalize pays `matched - claimed` and credits back
-     *         only what the wrapper reports it actually moved, so `claimed` can never exceed a
-     *         recipient's matched sum and a fully-claimed batch pays an encrypted zero on any repeat.
-     *         The cost of dropping the cleartext guard: a repeat call still runs the scan and emits a
-     *         genuine-looking {WrapFinalized} carrying an encrypted-zero amount. That amount is opaque
-     *         in every path (a finalize of a batch the recipient is not in already emits one), and the
-     *         repeat is throttled by paying for the scan, so this is log noise, not a forgeable
-     *         payout. An empty id set is still rejected outright.
+     *         REPLAY / DOUBLE-SPEND. Each batch tracks an encrypted `claimed[recipient]` (see
+     *         {Batch}); a finalize pays `matched - claimed` and credits back only what the wrapper
+     *         reports it actually moved, so `claimed` can never exceed a recipient's matched sum and
+     *         a fully-claimed batch pays an encrypted zero on any repeat. A repeat call still runs
+     *         the scan and emits a {WrapFinalized} carrying an encrypted-zero amount. That amount is
+     *         opaque in every path (a finalize of a batch the recipient is not in already emits one),
+     *         and the repeat is throttled by paying for the scan, so it is log noise rather than a
+     *         forgeable payout. An empty id set is rejected outright.
      *
      * @param ids Batch ids to finalize — MUST be strictly increasing (no duplicates).
      * @param recipient Address to match deposits against and transfer to.

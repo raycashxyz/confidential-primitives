@@ -704,22 +704,22 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         FHE.allowTransient(eTransferAmount, token);
         try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
-            // ESCALATION, NOT A SKIP — the one item-level failure that takes the whole batch down.
-            // Every other skip reason is a cleartext precondition the caller can fix: no permission
-            // window, no operator grant. A handle the token is not authorized on is different in
-            // kind. No conforming ERC-7984 can produce one — OZ's `_update` ends with
-            // `FHE.allowThis(transferred)` — so it is positive evidence that the counterparty is
-            // hostile rather than merely unusable.
+            // This one reverts the whole batch; every other failure in this function is skipped.
+            // The skips are cleartext preconditions the caller can fix: no permission window, no
+            // operator grant. A handle the token is not authorized on is different in kind. No
+            // conforming ERC-7984 can produce one (OZ's `_update` ends with
+            // `FHE.allowThis(transferred)`), so it is evidence that the counterparty is hostile
+            // rather than merely unusable.
             //
             // `token` is caller-supplied per item, so skipping would mean settling unrelated payers
             // in the same transaction as a contract already caught lying about its return value, on
             // the assumption that lying is the only thing it does. We do not make that assumption:
-            // the unknown behaviour of a proven-malicious callee is exactly the class of risk that
-            // is obvious only after someone exploits it. Reverting also unwinds the transfer this
-            // call just made, which a skip cannot.
+            // the unknown behaviour of a proven-malicious callee is the class of risk that looks
+            // obvious only after someone exploits it. Reverting also unwinds the transfer this call
+            // just made, which a skip cannot.
             //
-            // The cost is real and one-sided: a single hostile token kills the honest items beside
-            // it. Screen tokens before batching, or submit suspect ones in their own call.
+            // The cost is one-sided: a single hostile token kills the honest items beside it.
+            // Screen tokens before batching, or submit suspect ones in their own call.
             if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
             _recordSpend(from, token, msg.sender, transferred);
             FHE.allowTransient(transferred, msg.sender);
