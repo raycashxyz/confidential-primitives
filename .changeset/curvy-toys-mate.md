@@ -3,7 +3,7 @@
 ---
 
 `BatchedStealthWrapAdapter.finalizeWrap` no longer has an all-or-nothing outcome per batch. Every id
-in the set is processed. Each batch pays `matched - claimed` for the recipient and credits back what
+in the set is processed when the call succeeds. Each batch pays `matched - claimed` for the recipient and credits back what
 the wrapper reports it moved, so a batch with nothing left to claim transfers an encrypted zero
 instead of reverting. `AlreadyFinalized` is gone, along with the cleartext per-(batch, recipient)
 flag it guarded.

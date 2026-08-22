@@ -10,55 +10,35 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  * @title ContinuousStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Continuous stealth wrap adapter for an existing ERC7984ERC20Wrapper.
+ * @notice Stealth wrap adapter over one shared pool. Deposits accumulate continuously and are
+ *         finalized against caller-selected ids, so the caller chooses the anonymity set and
+ *         `minDecoys` enforces only its size.
  *
- *         Deposits accumulate in one shared pool and are finalized by
- *         caller-selected ids. This gives maximum flexibility, but the caller
- *         controls the decoy set quality. `minDecoys` only enforces a lower bound.
+ * @dev Two properties of that design, neither of which the contract can check.
  *
- *         `minDecoys` IS A COUNT OF IDS, NOT A MEASURE OF PRIVACY. Two consequences worth knowing
- *         before choosing it, neither of which the contract can check:
+ *      Cold start. Finalization needs at least `minDecoys` deposits in the pool and {initWrap} has
+ *      no such floor, so the first `minDecoys - 1` depositors wait. A depositor can fund the missing
+ *      deposits themselves, but {WrapInitiated} publishes depositor and amount, so that run is
+ *      attributable to them. Seed the pool at deployment, or accept the wait.
  *
- *         - COLD START. Finalization needs at least `minDecoys` existing deposits, but {initWrap}
- *           has no matching floor. It escrows funds into a pool too small to finalize from.
- *           The first `minDecoys - 1` depositors in a quiet deployment wait. They are not
- *           stuck, since {initWrap} is permissionless and a depositor can fund the missing deposits
- *           themselves, but {WrapInitiated} publishes depositor and clear amount, so self-help
- *           means creating a visible run of deposits attributable to them, which costs them the
- *           privacy they came for. Seed the pool at deployment, or accept the wait.
- *
- *         - SPENT SLOTS STILL COUNT. A matched deposit's `amount` is rewritten to an encrypted
- *           zero, but the slot stays in the push-only array and remains a legal id forever. It is
- *           also publicly indistinguishable from a live one, since `amount` is still a handle and
- *           `originalAmount` never changes. So an early sybil can seed the pool, drain their own
- *           deposits, and leave a victim whose only legal id sets are mostly attacker-owned. The
- *           attacker then knows which ids are not the recipient's and links {WrapInitiated} to
- *           {WrapFinalized}. Choosing ids well is the defence, and it is the caller's job;
- *           `ids.length >= minDecoys` says nothing about how many of them are real.
+ *      Spent slots. A matched deposit's `amount` is rewritten to an encrypted zero, but the slot
+ *      stays a legal id and is publicly indistinguishable from a live one. An early sybil can seed
+ *      the pool, drain their own deposits and leave a victim whose id sets are mostly attacker-owned,
+ *      which links {WrapInitiated} to {WrapFinalized}. Choosing ids well is the caller's job.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
-    /// @dev Hard cap on the configurable decoy floor. `minDecoys` is a MINIMUM: every finalize must
-    ///      scan at least that many ids, so a floor above what one transaction can execute leaves a
-    ///      deployment where deposits still succeed but NO legal `ids` array can ever be finalized:
-    ///      fewer ids revert `TooFewDecoys`, more revert on the FHEVM budget. `minDecoys` is
-    ///      immutable and there is no alternative finalization path, so those funds are stuck.
+    /// @dev Hard cap on the decoy floor. `minDecoys` is a minimum every finalize must scan, so a
+    ///      floor above what one transaction can execute would strand every deposit. Fewer ids
+    ///      revert `TooFewDecoys`, more revert on the FHEVM budget, and `minDecoys` is immutable.
     ///
-    ///      finalize does a fixed amount of FHE work per slot: scalar `eq` on Uint160 (117,000) +
-    ///      payout `select` (55,000) + zeroing `select` (55,000) = 227,000 HCU, plus (N-1) tree
-    ///      `add`s at 162,000. The `eq` is the SCALAR cost because the recipient is cleartext, see
-    ///      {finalizeWrap}. So the binding limit is the 20M TOTAL-HCU/tx budget, not the 5M DEPTH
-    ///      cap. The tree holds depth at 1,144,000 (23% of that cap) for every N in range.
-    ///
-    ///      Where it runs out, measured on the FHEVM coprocessor mocks: 50 slots finalizes
-    ///      and 51 REVERTS against the bare mock wrapper. The adapter's own work alone would fit 51
-    ///      (`389,000N - 162,000`, so 19,677,000 at N=51 against a cap enforced as `>=`). The
-    ///      one-slot difference IS the wrapper's own transfer work, which spends from the same
-    ///      budget. 40 keeps ~20% headroom below that measured cliff, because a bare mock is the
-    ///      cheapest wrapper there is. A hooked wrapper's modules add to the same budget and can be
-    ///      installed after deposits are escrowed (see the README's wrapper-compatibility note).
-    ///
-    ///      This bounds only the configurable FLOOR. A caller may still pass more ids than this and
-    ///      pay for them, which is their own sizing decision.
+    ///      Finalize costs a fixed 227,000 HCU per slot (scalar `eq` on Uint160, payout `select`,
+    ///      zeroing `select`) plus 162,000 per tree `add`, against the 20M total budget. The tree
+    ///      holds depth at 1,144,000 for every N in range. Measured on the coprocessor mocks, 50
+    ///      slots finalize and 51 revert against the bare mock wrapper, the difference being the
+    ///      wrapper's own transfer work, which spends from the same budget. 40 keeps about 20%
+    ///      headroom below that cliff. A hooked wrapper's modules add to the same budget and can be
+    ///      installed after deposits are escrowed. Callers may still pass more ids than this and
+    ///      pay for them.
     uint256 private constant MAX_MIN_DECOYS = 40;
 
     uint256 public immutable minDecoys;
@@ -114,22 +94,16 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     }
 
     /**
-     * @notice Match the caller-chosen `ids` against `recipient` and transfer the encrypted sum,
-     *         zeroing each matched deposit so it cannot pay again.
-     *
-     * @dev REQUIRES AN EXACT-OR-REVERT (at least all-or-nothing) WRAPPER. Matched deposits are zeroed
-     *      BEFORE the transfer, so the zeroing is the nullifier. If the wrapper then soft-fails,
-     *      returning an encrypted zero or a partial amount on a freeze, pause, blacklist or hook veto
-     *      instead of reverting, the claim is already consumed and the funds strand with no way to
-     *      retry.
-     *
-     *      Unlike {BatchedStealthWrapAdapter}, this CANNOT be made retry-safe. That adapter recomputes
-     *      a per-(batch, recipient) `matched` and credits an encrypted `claimed` ledger with what
-     *      moved. Both rely on a fixed batch of immutable deposits. Here the "batch" is a
-     *      caller-chosen id set over a flat pool, so there is no stable unit to accumulate against, and
-     *      a partial transfer cannot be attributed back to individual deposits without one transfer per
-     *      slot (prohibitive). So the exact-or-revert wrapper requirement stands for this adapter. See
-     *      the SUPPORTED WRAPPERS note on {StealthWrapAdapter}.
+     * @notice Match the caller-chosen `ids` against `recipient`, transfer the encrypted sum and zero
+     *         each matched deposit so it cannot pay again.
+     * @dev Requires an exact-or-revert wrapper. Matched deposits are zeroed before the transfer, so
+     *      a wrapper that soft-fails, moving zero or part on a freeze, pause or hook veto, consumes
+     *      the claim and strands the funds. The id set is caller-chosen over a flat pool, so there is
+     *      no stable unit to keep a claimed ledger against and a partial transfer cannot be
+     *      attributed back to individual deposits. See {BatchedStealthWrapAdapter} for the
+     *      retry-safe design.
+     * @param ids Deposit indices to scan. Must be strictly increasing and at least `minDecoys` long.
+     * @param recipient Address to match deposits against and transfer to.
      */
     function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
         if (ids.length < minDecoys) revert TooFewDecoys();
@@ -145,15 +119,10 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
             prevIndex = i;
 
             Deposit storage d = deposits[i];
-            // Scalar overload (cleartext rhs): `recipient` is public calldata, re-emitted indexed
-            // in {WrapFinalized}, so trivially encrypting it first bought no confidentiality, and the
-            // ciphertext-ciphertext `eq` cost 20,000 HCU more per scanned slot than the scalar one.
-            // Since the HCU budget is what bounds `ids.length`,
-            // and `ids.length` IS the anonymity set, that was a privacy cost as well as a gas one.
-            //
-            // The scalar path skips the operand type check, which is only safe because every stored
-            // handle was imported through {_verifyRecipient}, i.e. coprocessor `verifyInput`-verified
-            // as Uint160. Do not import recipients any other way while this comparison is scalar.
+            // Scalar `eq`. `recipient` is public calldata, so encrypting it first would buy nothing
+            // and cost 20,000 HCU more per slot, and slots are the anonymity set. The scalar path
+            // skips the operand type check, which is safe only because every stored handle was
+            // imported through {_verifyRecipient} and type-checked as Uint160 by the coprocessor.
             ebool isMatch = FHE.eq(d.recipient, recipient);
             payouts[k] = FHE.select(isMatch, d.amount, E_ZERO);
 

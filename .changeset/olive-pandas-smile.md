@@ -2,35 +2,30 @@
 "@raycashxyz/confidential-primitives": minor
 ---
 
-New `FHEUtils` library (`contracts/fhe/FHEUtils.sol`), extending `@fhevm/solidity` with
-what contracts that handle ciphertexts they did not create keep needing: `fromExternal` (imports that
-grant ACL access to the importing contract only, and always type-check the handle), `isAuthoredBy`
-(provenance of a handle an untrusted contract hands back) and `sum` (tree reduction that keeps FHE
-dependency depth at `ceil(log2 N)`).
+New `FHEUtils` library (`contracts/fhe/FHEUtils.sol`), extending `@fhevm/solidity` with what
+contracts that handle ciphertexts they did not create keep needing.
 
-Both shipped contracts now route every external ciphertext through `FHEUtils.fromExternal` instead of
-`FHE.fromExternal`. `StealthWrapAdapter._sumTree` and `RecurringAllowance`'s returned-handle check are
-thin wrappers over the library, so their own APIs and any derived adapters are unchanged.
+`fromExternal(handle, proof, user)` imports a caller-supplied ciphertext and grants ACL access to the
+importing contract only. `FHE.fromExternal` also grants the submitter transient access, which a
+contract submitter can persist or publish within the same transaction. The proof binding is
+unchanged, so the ciphertext stays submittable only by `user`. It passes the expected type to the
+coprocessor and reverts `MissingInputProof` on an empty proof, so the `FHE.fromExternal` branch that
+returned a handle verbatim after an ACL check is unreachable. That branch was the entry point for the
+audit's wrong-typed-handle findings: a `Bool` recipient matching every address, a `euint64` recipient
+welded into a serial FHE chain that tripped the 5M depth budget, and a non-`Uint64` permission limit
+that aborted whole `tryTransferFrom` batches.
 
-`FHE.fromExternal` ends with a second `IACL.allowTransient(result, msg.sender)` in the calling
-contract's frame, so whoever submitted the ciphertext receives transient ACL access to it. An EOA
-cannot use that, but a contract caller, still executing in the same transaction, can promote it
-with `FHE.allow` or publish it with `FHE.makePubliclyDecryptable`, then decrypt off-chain. Passing the
-expected `FheType` to the coprocessor also closes `fromExternal`'s empty-proof branch, which returns a
-handle verbatim after only an ACL check and is the entry point for the wrong-typed-handle attacks.
-The proof binding is unchanged. The ciphertext still verifies against a named `user`, so it remains
-submittable only by the party it was issued to.
+`isAuthorizedOn(handle, account)` checks a ciphertext an untrusted contract hands back. Anything that
+passes is something the callee could already read, so it cannot launder a third party's handle
+through you. `HandleSet`, with `isFresh` and `markUsed`, tracks single-use input handles. `sum(xs)`
+reduces an array pairwise, keeping FHE dependency depth at `ceil(log2 N)`.
 
-This fixes one previously unreported leak. `RecurringAllowance.permitTransferFrom` imported the
-cheque's encrypted cap with `FHE.fromExternal`. The cap is chosen by the OWNER, bound to the
-spender, and never granted onward, since only `transferred` is shared. A contract spender could
-therefore persist the cap handle, which is `permit.capHandle`, already in their own calldata, and
-decrypt the owner's private ceiling. Not theft, but it removes the uncertainty the design relies on:
-an over-request moves an encrypted zero and still burns the nonce, so a spender who cannot see the
-cap is pushed to under-request. Regression test uses a contract spender that reports its own access
-and then tries to escalate.
-
-The stealth adapters' recipient import already had this containment. It now shares the library
-implementation rather than open-coding it. `test/fhe-utils.mock.test.ts` asserts the library's
-guarantees directly, including that the submitter ends up with no access, so an
-`@fhevm/solidity` bump that changed `verifyInput`'s ACL behaviour fails there rather than silently.
+Both shipped contracts route every external ciphertext through `FHEUtils.fromExternal` and call the
+library directly for the returned-handle check and the reduction. This fixes one previously unreported leak.
+`RecurringAllowance.permitTransferFrom` imported the cheque cap with `FHE.fromExternal`. The cap is the
+owner's, bound to the spender and never granted onward, so a contract spender could persist the cap
+handle, already in its calldata, and decrypt the owner's ceiling. Not theft, but a spender who cannot
+see the cap is pushed to under-request, since an over-request moves an encrypted zero and burns the
+nonce. `test/fhe-utils.mock.test.ts` asserts the library's guarantees directly, including that the
+submitter ends up with no access, so an `@fhevm/solidity` bump that changed `verifyInput`'s ACL
+behaviour fails there.

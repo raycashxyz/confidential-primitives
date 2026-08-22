@@ -8,11 +8,10 @@ import {euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
  * @author Valerio Leo (@valeriohq)
  * @notice Interface for {RecurringAllowance}: encrypted, period-based spending
  *         permissions over an ERC-7984 confidential token on the Zama FHEVM.
- * @dev ERC-7984 compliance alone is NOT sufficient. The standard treats confidential amounts as
- *      opaque `bytes32` pointers and leaves their resolution implementation-specific (FHE,
- *      zero-knowledge, enclaves, …). This contract requires Zama `euint64` handles, the FHEVM ACL
- *      and coprocessor-issued input proofs, and it operates on handles the token returns, so the
- *      token must live in the same FHEVM deployment.
+ * @dev Requires more than ERC-7984 from the token. The standard treats confidential amounts as
+ *      opaque `bytes32` pointers and leaves their resolution to the implementation. This contract
+ *      needs Zama `euint64` handles, the FHEVM ACL and coprocessor-issued input proofs, and it
+ *      operates on handles the token returns, so the token must live in the same FHEVM deployment.
  */
 interface IRecurringAllowance {
     /**
@@ -205,8 +204,8 @@ interface IRecurringAllowance {
         euint64 transferred
     );
 
-    /// @notice A {tryTransferFrom} item was skipped for a cleartext reason. Encrypted
-    ///         denials are NOT skips. They execute and transfer an encrypted zero.
+    /// @notice A {tryTransferFrom} item was skipped for a cleartext reason. Encrypted denials
+    ///         execute and transfer an encrypted zero rather than being skipped.
     event TransferSkipped(
         address indexed from,
         address indexed to,
@@ -311,8 +310,8 @@ interface IRecurringAllowance {
         bytes calldata signature
     ) external returns (euint64 transferred);
 
-    /// @notice Permission at `permissionIndex` for the key. Indices are NOT stable across
-    ///         writes (swap-and-pop). Re-address by the returned `id`.
+    /// @notice Permission at `permissionIndex` for the key. Indices shift on swap-and-pop.
+    ///         Re-address by the returned `id`.
     function getPermission(
         address user,
         address token,

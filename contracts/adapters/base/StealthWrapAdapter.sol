@@ -34,13 +34,12 @@ import {FHEUtils} from "../../fhe/FHEUtils.sol";
  *      finalize event names the scanned set. A recipient who unwraps exactly what they were paid
  *      lets anyone search the scanned amounts for the subset that sums to it.
  *
- *      Supported wrappers. ERC-7984 lets `wrap` and `confidentialTransfer` soft-fail, moving zero
- *      or less than requested while the transaction succeeds. A soft-failing `wrap` would leave the
- *      underlying with the wrapper and a zero-valued deposit here, with no refund path, so the
- *      wrapper must be exact-or-revert on `wrap`. On finalize the requirement depends on the
- *      adapter. The batched one is retry-safe, the continuous one also needs exact-or-revert on
- *      `confidentialTransfer`. A bare OpenZeppelin `ERC7984ERC20Wrapper` qualifies. A hooked one is
- *      as safe as the modules its admin can install.
+ *      Supported wrappers. ERC-7984 lets `wrap` and `confidentialTransfer` move less than requested
+ *      without reverting. The wrapper must be exact-or-revert on `wrap`, since a short wrap leaves
+ *      the underlying with the wrapper and a zero-valued deposit here, and the continuous adapter
+ *      also needs it on `confidentialTransfer`, where the batched one is retry-safe. A bare
+ *      OpenZeppelin `ERC7984ERC20Wrapper` qualifies. A hooked one is as safe as the modules its
+ *      admin can install.
  *
  *      Reentrancy. {_wrapIntoEscrow} calls out before the caller records its deposit and
  *      {_transferWrapped} calls out next to the claim commit, so both run only inside a
@@ -97,15 +96,11 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
 
     /**
      * @dev Import a depositor-submitted encrypted recipient and consume its handle. Every deposit
-     *      path must import through here. The import grants this adapter transient access only.
-     *      The caller persists it with `FHE.allowThis` where it stores the handle.
-     *
-     *      The coprocessor checks the handle's type against `Uint160`, which keeps a wrong-typed
-     *      handle out of the `eaddress` slot. A `Bool` handle would otherwise compare equal to every
-     *      non-zero recipient under the scalar `FHE.eq` and drain the pool, a `euint64` handle
-     *      chained onto another slot's payout would push finalize past the FHEVM depth budget, and
-     *      any other type would make the continuous adapter's `FHE.eq` revert for every id set
-     *      naming the slot.
+     *      path must import through here. The import grants this adapter transient access only, so
+     *      the caller persists it with `FHE.allowThis` where it stores the handle, and the
+     *      coprocessor checks the handle's type against `Uint160`, which keeps a `Bool` or `euint64`
+     *      handle out of the `eaddress` slot, where the scalar `FHE.eq` in finalize would not
+     *      catch it.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress recipient) {
         recipient = FHEUtils.fromExternal(eRecipient, inputProof, msg.sender);
@@ -115,16 +110,12 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
     /**
      * @dev Single-use policy for recipient handles. The handle is public in the deposit event so
      *      the recipient can spot their payment, which makes a reused one a tag linking deposits to
-     *      the same unknown recipient. A fresh encryption of the same address is a different handle,
-     *      so a recipient can still be paid any number of times, and the depositor-bound proof means
-     *      nobody else can spend a handle.
-     *
-     *      Override to permit reuse only where the deposit path already links the deposits. The
-     *      CREATE2 deposit-address flow is the case. Its address derives from the handle
-     *      (`salt == handle`), so the handle cannot rotate, and the payer's clear transfer to that
-     *      address clusters the deposits before `initWrap` runs. An override should still call
-     *      `_recipientHandles.markUsed(handle)` so {recipientHandleUsed} reports history, and the
-     *      adapter must document that its deposits are linkable by recipient.
+     *      the same unknown recipient, while a fresh encryption of the same address is a different
+     *      handle, so a recipient can still be paid any number of times. Override to permit reuse
+     *      only where the deposit path already links the deposits, as a CREATE2 deposit-address
+     *      flow with `salt == handle` does. Such an override should still call
+     *      `_recipientHandles.markUsed(handle)` so {recipientHandleUsed} reports history, and must
+     *      document that its deposits are linkable by recipient.
      */
     function _consumeRecipientHandle(bytes32 handle) internal virtual {
         if (!_recipientHandles.markUsed(handle)) revert RecipientHandleAlreadyUsed();

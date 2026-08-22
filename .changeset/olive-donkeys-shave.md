@@ -2,8 +2,8 @@
 "@raycashxyz/confidential-primitives": minor
 ---
 
-`RecurringAllowance` now verifies the provenance of every handle a token returns, and reverts
-`InvalidReturnedHandle` on every path when the check fails.
+`RecurringAllowance` now checks that every handle a token returns is one the token is authorized
+on, and reverts `InvalidReturnedHandle` on every path when the check fails.
 
 Ciphertext handles are global rather than namespaced per token, and `token` is a caller-supplied
 address, so a malicious token could return any handle in place of its transfer result. Because this
@@ -13,7 +13,7 @@ then granted to them, making any user's encrypted limit or spend history decrypt
 
 The returned handle must now be initialized and ACL-authorized to the returning token, which an
 honestly computed result always is (`ERC7984._update` ends with `FHE.allowThis(transferred)`). The
-check is `FHEUtils.isAuthoredBy`.
+check is `FHEUtils.isAuthorizedOn`.
 
 `tryTransferFrom` reverts here too, rather than skipping the item. Every other lenient-path failure
 is a cleartext precondition the caller can fix, such as no permission window or no operator grant, and skipping

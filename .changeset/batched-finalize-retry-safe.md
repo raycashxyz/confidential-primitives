@@ -9,9 +9,11 @@ reports it moved. A transfer that soft-fails to zero, as on a freeze, pause, bla
 or moves only part now leaves the exact remainder claimable instead of destroying the claim, and no
 sequence can pay a recipient more than their matched sum. Each batch id is finalized independently
 (one transfer per batch), so a partial fill is attributed correctly. Passing several ids is a
-convenience, not a merge.
+convenience, not a merge. All ids still share one transaction, so a batch that reverts takes the
+whole call with it. The no-op behaviour covers fully claimed replays and soft-failed transfers, not
+reverts.
 
-Consequences: `finalizeWrap` reverts `AlreadyFinalized` no longer, since a replay of a fully-claimed
+Consequences: `finalizeWrap` no longer reverts with `AlreadyFinalized`, since a replay of a fully-claimed
 batch is a no-op that transfers an encrypted zero. The `finalized(batchId, recipient)` bool view is
 replaced by `claimedAmount(batchId, recipient)` returning the encrypted claimed handle, and
 `WrapFinalized` is emitted once per batch. The claim commit now happens after the transfer, so the

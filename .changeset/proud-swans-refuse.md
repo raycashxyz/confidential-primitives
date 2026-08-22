@@ -6,8 +6,9 @@ Adds `RecurringAllowance.activePermissionCount(user, token, spender)`, the numbe
 spend would evaluate, which is what drives its FHE cost. Batch sizing is documented on both
 batch entry points.
 
-`tryTransferFrom` exists so one bad item doesn't kill a batch, but it cannot cover budget
-exhaustion, because permission evaluation runs before the `try` opens, so an over-large batch reverts the
+`tryTransferFrom` exists so one skippable cleartext failure doesn't kill a batch, the exception being
+an unauthorized return handle, which reverts the call. It cannot cover HCU budget exhaustion, because
+permission evaluation runs before the `try` opens, so an over-large batch reverts the
 whole call, with `HCULimit`'s `HCUTransactionLimitExceeded` or `HCUTransactionDepthLimitExceeded`
 naming the budget, and the items that would have fit are lost with it. Items share no FHE work, so
 cost is the sum over items and one payer's tier count moves the ceiling for everyone else in the

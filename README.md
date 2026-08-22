@@ -43,7 +43,7 @@ Our adapters close that last gap, and without replacing anything. A stealth wrap
 
 These two are a starting point, not the whole space. `StealthWrapAdapter` is built to be extended. Implement `finalizeWrap` over its escrow and delivery, and you can form the anonymity set your own way, whether time-windowed, tiered by amount, allowlist-scoped or whatever your threat model calls for. If you build one, we'd love to see it.
 
-`BatchedStealthWrapAdapter` also supports a narrower extension. When only *how a deposit is acquired* changes, a derived adapter can reuse its batch, claim-ledger and accounting machinery. Acquire the funds into escrow with `_wrapIntoEscrow(depositor, amount)`, then call `_recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, recipient)`. Both `initWrap` and `finalizeWrap` are virtual, so a derived adapter can replace either public entrypoint. An entrypoint that calls the escrow helper must remain `nonReentrant`.
+`BatchedStealthWrapAdapter` also supports a narrower extension. When only *how a deposit is acquired* changes, a derived adapter can reuse its batch, claim-ledger and accounting machinery. Acquire the funds into escrow with `_wrapIntoEscrow(depositor, amount)`, then call `_recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, recipient)`. Both `initWrap` and `finalizeWrap` are virtual, so a derived adapter can replace either public entrypoint. The escrow helpers and `_recordBatchedDeposit` revert `ReentrancyGuardRequired` outside a `nonReentrant` entrypoint.
 
 ### How it works
 
@@ -97,7 +97,7 @@ Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this s
 
 There's no contract-side fix, but there is a practical client-side one, and it works *because* the deposit side is transparent. Depositor and amount are cleartext in `WrapInitiated`, so **you can see who is already in a batch before you join it**. A batch dominated by freshly funded addresses that all appeared moments ago is visible for what it is. Two things follow for wallets:
 
-- Use `initWrapInto(expectedBatchId, …)` rather than `initWrap`, so you land in the batch you inspected or revert without moving funds. Plain `initWrap` can be front-run into a fresh, empty batch that the attacker then fills around you.
+- For `BatchedStealthWrapAdapter`, use `initWrapInto(expectedBatchId, …)` rather than `initWrap`, so you land in the batch you inspected or revert without moving funds. Plain `initWrap` can be front-run into a fresh, empty batch that the attacker then fills around you.
 - Judge the crowd before depositing, looking at distinct depositors, funding history and age. `initWrapInto` prevents displacement. It does not stop anyone from co-depositing into the batch you pinned.
 
 | Signal | Visibility |
@@ -137,7 +137,7 @@ ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing
 - **Budgets stack conjunctively.** Every active permission for a (user, token, spender) key must pass (AND logic), so "100/day AND 500/week" is just two `setPermission` calls. The corollary is that adding a permission only ever *tightens* the allowance. To raise a limit, update the existing permission instead of adding one.
 - **Periods are fixed windows**, anchored at `startTime` (period `n` is `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding window. `spent` resets lazily at the first spend attempt in a new period. A spender straddling a boundary can move up to 2x the limit inside one `duration`-long span. That is inherent to fixed windows, so size limits with that in mind.
 - **Allowance tracks value moved, not attempts.** `spent` is credited with the amount the token reports as transferred, so a pull against an insufficient balance consumes nothing and can be retried after a top-up.
-- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural, namely no active permission window (`NoPermissions`), which is public information anyway.
+- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The cleartext reverts are no active permission window (`NoPermissions`), which is public information anyway, and a token returning a ciphertext handle it is not authorized on (`InvalidReturnedHandle`).
 - **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them. `RecurringAllowance` is scoped delegation, not a token-level firewall, and `lockdown` cannot revoke the operator status itself, so do that on the token for belt and braces.
 
 ### Signature permits (gasless grants and confidential cheques)
@@ -192,18 +192,23 @@ that are easy to get silently wrong.
 access to *your contract only*. `FHE.fromExternal` also grants the **submitter** transient access. An
 EOA can't use that, but a contract caller, still running in the same transaction, promotes it with
 `FHE.allow` or publishes it with `FHE.makePubliclyDecryptable`, then decrypts a plaintext it was never
-meant to see. Passing the expected type to the coprocessor also closes `fromExternal`'s
-empty-proof branch, which returns a handle verbatim after only an ACL check and lets a caller land a
-wrong-typed handle in a typed slot. The proof binding is unchanged. `user` is still verified, so the
-ciphertext stays submittable only by the party it was issued to. Pass `msg.sender` unless you know
-why you shouldn't.
+meant to see. The expected type travels to the coprocessor, which reverts `InvalidType` on a
+mismatch, and an empty proof reverts `MissingInputProof`, so the `FHE.fromExternal` branch that
+returns a handle verbatim after only an ACL check is unreachable. The proof binding is unchanged.
+`user` is still verified, so the ciphertext stays submittable only by the party it was issued to.
+Pass `msg.sender` unless you know why you shouldn't.
 
-**`isAuthoredBy(handle, author)`** is the check to run on any ciphertext an untrusted contract hands
-*back* to you. Handles are global rather than namespaced, so a hostile callee can return a handle
-belonging to someone else, such as one it read from a public getter. Fold that into your own state and grant
-the result onward, and you have laundered a third party's ciphertext into something your caller can
-decrypt. A contract is always authorized on a value it computed and cannot grant itself access
-to one it didn't, which is what separates the two.
+**`isAuthorizedOn(handle, account)`** is the check to run on any ciphertext an untrusted contract
+hands *back* to you. Handles are global rather than namespaced, so a hostile callee can return a
+handle belonging to someone else, such as one it read from a public getter. Fold that into your own
+state and grant the result onward, and you have laundered a third party's ciphertext into something
+your caller can decrypt. A contract cannot grant itself access to a handle it does not hold, so
+anything that passes is something the callee could already read.
+
+**`HandleSet`**, with `isFresh(set, handle)` and `markUsed(set, handle)`, tracks input handles that
+must be single-use. `markUsed` reports whether the handle was fresh, so a caller enforcing single-use
+reverts on `false` and one permitting reuse ignores it. The stealth adapters keep their recipient
+handles in one.
 
 **`sum(xs)`** tree-reduces an array to one ciphertext. fhEVM meters *two* budgets per transaction:
 total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N

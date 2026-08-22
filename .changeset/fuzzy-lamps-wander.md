@@ -4,11 +4,11 @@
 
 Recipient-handle freshness is now an overridable policy rather than a hard-coded rule.
 `StealthWrapAdapter._consumeRecipientHandle(bytes32)` is `virtual` and still single-use by default,
-and the bundled adapters behave as before, with `_recordRecipientHandle(bytes32)` available so an
-override that permits reuse can keep `recipientHandleUsed` truthful.
+and the bundled adapters behave as before. An override that permits reuse records the handle in the
+adapter's `FHEUtils.HandleSet` so `recipientHandleUsed` stays truthful.
 
-The empty-proof gate and the typed import in `_verifyRecipient` stay outside the hook and
-non-overridable, so a derived adapter can relax freshness without being handed a way to relax the
+The typed import in `_verifyRecipient`, which also rejects an empty proof, stays outside the hook
+and non-overridable, so a derived adapter can relax freshness without being handed a way to relax the
 type check that closes the `Bool` / `euint64` recipient attacks.
 
 This exists for deposit paths that already publish the grouping single-use protects. A CREATE2
