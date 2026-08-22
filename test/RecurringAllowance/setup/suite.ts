@@ -28,7 +28,6 @@ export const MAX_UINT64 = 2n ** 64n - 1n;
 export const SKIP_NONE = 0;
 export const SKIP_NO_PERMISSIONS = 1;
 export const SKIP_TOKEN_CALL_FAILED = 2;
-export const SKIP_INVALID_RETURN_HANDLE = 3;
 
 export type TokenContract = Awaited<ReturnType<typeof getOrDeployMockConfidentialToken>>["contract"];
 export type AllowanceContract = Awaited<ReturnType<typeof getOrDeployRecurringAllowance>>["contract"];

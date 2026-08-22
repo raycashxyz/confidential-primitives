@@ -452,6 +452,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         event instead of reverting the batch. Encrypted denials are NOT skips:
      *         they execute obliviously and move an encrypted zero, exactly as in
      *         {transferFrom}.
+     *
+     *         Leniency does NOT extend to a token that returns a handle it is not authorized on.
+     *         That reverts `InvalidReturnedHandle` and takes the whole batch with it — see
+     *         {_isTokenAuthored} and the note at the call site for why this failure is escalated
+     *         rather than skipped.
      * @dev Malformed input proofs still revert the whole call (`FHE.fromExternal` is
      *      not catchable), as does a `token` address with no code (the compiler's
      *      extcodesize check reverts outside try/catch) — both are the caller's own
@@ -466,11 +471,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      {activePermissionCount}.
      * @return executed Per-item flags: true if the item completed and its spend was recorded (the
      *         encrypted outcome may still be zero). False means the item was skipped — see
-     *         {TransferSkipped} for which reason. NOTE the `INVALID_RETURN_HANDLE` case reports false
-     *         AFTER the token call has already run: a token that moves funds and then returns a
-     *         handle it does not own has its transfer left standing, because reverting here would
-     *         take down the whole batch. Only a malicious token reaches that branch, and one can move
-     *         its own ledger without this contract's help; see {_isTokenAuthored}.
+     *         {TransferSkipped} for which reason. No flag reports a transfer that moved funds: the
+     *         one case that could have (an unauthorized return handle) now reverts the call.
      */
     function tryTransferFrom(TransferDetails[] calldata transfers) external nonReentrant returns (bool[] memory executed) {
         executed = new bool[](transfers.length);
@@ -659,6 +661,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         // The token computes over the handle during this call only.
         FHE.allowTransient(eTransferAmount, token);
         transferred = IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount);
+        // Reject a handle the token is not authorized on before it reaches `_recordSpend` — see
+        // {_isTokenAuthored} for why an unauthorized handle is a confidentiality leak, not a nuisance.
         if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
 
         _recordSpend(from, token, msg.sender, transferred);
@@ -696,12 +700,23 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         FHE.allowTransient(eTransferAmount, token);
         try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
-            // Skip rather than revert: this branch runs in OUR frame, so reverting here would take
-            // down the whole batch — exactly what tryTransferFrom exists to avoid.
-            if (!_isTokenAuthored(token, transferred)) {
-                emit TransferSkipped(from, to, token, msg.sender, SkipReason.INVALID_RETURN_HANDLE);
-                return false;
-            }
+            // ESCALATION, NOT A SKIP — the one item-level failure that takes the whole batch down.
+            // Every other skip reason is a cleartext precondition the caller can fix: no permission
+            // window, no operator grant. A handle the token is not authorized on is different in
+            // kind. No conforming ERC-7984 can produce one — OZ's `_update` ends with
+            // `FHE.allowThis(transferred)` — so it is positive evidence that the counterparty is
+            // hostile rather than merely unusable.
+            //
+            // `token` is caller-supplied per item, so skipping would mean settling unrelated payers
+            // in the same transaction as a contract already caught lying about its return value, on
+            // the assumption that lying is the only thing it does. We do not make that assumption:
+            // the unknown behaviour of a proven-malicious callee is exactly the class of risk that
+            // is obvious only after someone exploits it. Reverting also unwinds the transfer this
+            // call just made, which a skip cannot.
+            //
+            // The cost is real and one-sided: a single hostile token kills the honest items beside
+            // it. Screen tokens before batching, or submit suspect ones in their own call.
+            if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
             _recordSpend(from, token, msg.sender, transferred);
             FHE.allowTransient(transferred, msg.sender);
             emit AllowanceTransfer(from, to, token, msg.sender, transferred);

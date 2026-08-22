@@ -112,10 +112,7 @@ interface IRecurringAllowance {
         /// @dev No active permission window for (from, token, spender).
         NO_PERMISSIONS,
         /// @dev The token call reverted (e.g. this contract is not an operator for `from`).
-        TOKEN_CALL_FAILED,
-        /// @dev The token returned a handle it is not itself authorized on (see
-        ///      {RecurringAllowance-transferFrom}); nothing was recorded for the item.
-        INVALID_RETURN_HANDLE
+        TOKEN_CALL_FAILED
     }
 
     /// @dev `token` is the zero address.

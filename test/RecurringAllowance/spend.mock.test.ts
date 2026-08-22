@@ -4,7 +4,7 @@ import { getAddress, parseEventLogs } from "viem";
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
 import {
-  DAY, WEEK, SKIP_INVALID_RETURN_HANDLE, useAllowanceSuite
+  DAY, WEEK, useAllowanceSuite
 } from "./setup/suite";
 import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
 
@@ -87,8 +87,11 @@ describe("RecurringAllowance: spending", () => {
     await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
   });
 
-  it("skips (does not revert) a stolen return handle inside tryTransferFrom", async () => {
-    const { H, allowance } = S.ctx();
+  // Unlike every other lenient-path failure, an unauthorized return handle is escalated: it is
+  // positive evidence the token is hostile, so the whole batch reverts rather than settling the
+  // honest items alongside it. The honest item here proves the batch really is taken down.
+  it("reverts the whole tryTransferFrom batch on a stolen return handle", async () => {
+    const { H, allowance, token } = S.ctx();
     const { alice, bob, carol } = H.wallets;
 
     await S.setPermission({
@@ -98,33 +101,43 @@ describe("RecurringAllowance: spending", () => {
     });
     const victim = await S.getPermission(alice.account.address, carol.account.address, 0n);
 
+    // An honest item that would otherwise settle, batched alongside the poisoned one.
+    await S.fundUser(alice, 10_000n);
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+
     const evil = await armHostileToken();
     await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
 
-    const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 100n);
-    const receipt = await S.sendOk(allowance.write.tryTransferFrom([[{
-      from: bob.account.address,
-      to: carol.account.address,
-      amount: handle,
-      inputProof,
-      token: evil.address
-    }]], fheTxOpts(bob.account)));
+    const honest = await S.encAmount(allowance.address, bob.account.address, 100n);
+    const poisoned = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.tryTransferFrom([[
+        {
+          from: alice.account.address,
+          to: carol.account.address,
+          amount: honest.handle,
+          inputProof: honest.inputProof,
+          token: token.address
+        },
+        {
+          from: bob.account.address,
+          to: carol.account.address,
+          amount: poisoned.handle,
+          inputProof: poisoned.inputProof,
+          token: evil.address
+        }
+      ]], txOpts(bob.account)),
+      "InvalidReturnedHandle",
+    );
 
-    // The batch survives; only the poisoned item is dropped.
-    const [skipped] = parseEventLogs({
-      abi: allowance.abi,
-      logs: receipt.logs,
-      eventName: "TransferSkipped"
-    });
-    if (!skipped) throw new Error("no TransferSkipped event");
-    expect(skipped.args.reason).toBe(SKIP_INVALID_RETURN_HANDLE);
-    const attackerPermission = await allowance.read.getPermission([
-      bob.account.address,
-      evil.address,
-      bob.account.address,
-      0n
-    ]);
-    expect(await S.decryptAllowanceHandle(attackerPermission.spent, bob)).toBe(0n);
+    // The honest item was unwound with the rest of the batch, and the victim's limit stayed hers.
+    expect(await S.balanceOf(carol)).toBe(0n);
+    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(0n);
+    await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
   });
 
   it("moves funds when permitted and records spent for both parties", async () => {
