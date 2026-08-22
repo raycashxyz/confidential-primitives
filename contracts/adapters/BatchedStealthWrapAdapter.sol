@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
+import {FHEUtils} from "../fhe/FHEUtils.sol";
 
 /**
  * @title BatchedStealthWrapAdapter
@@ -36,10 +37,6 @@ import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
  *         still needs exact-or-revert, see its docs. A redundant finalize of a fully-claimed batch does not revert. It
  *         pays an encrypted zero. That is log noise, throttled by having to pay for the scan, and
  *         the amount was opaque either way.
- *
- *         The payout sum is tree-reduced via {_sumTree}. Pairwise reduction keeps the
- *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
- *         FHEVM total-HCU budget rather than a long serial add chain.
  *
  *         A batch must be CLOSED, either full or timeout-sealed via {sealBatch}, before finalizing.
  *         That freezes each recipient's matched set, since no later top-up can land in a finalized
@@ -460,7 +457,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
             ebool isMatch = FHE.eq(d.eRecipient, recipient);
             payouts[j] = FHE.select(isMatch, d.eAmount, E_ZERO);
         }
-        euint64 matched = _sumTree(payouts);
+        euint64 matched = FHEUtils.sum(payouts);
 
         euint64 alreadyClaimed = batch.claimed[recipient];
         if (!FHE.isInitialized(alreadyClaimed)) alreadyClaimed = E_ZERO;

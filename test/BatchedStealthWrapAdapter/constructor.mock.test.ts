@@ -47,8 +47,8 @@ describe("BatchedStealthWrapAdapter", () => {
   });
 
   describe("initWrap", () => {
-    // Every legitimate deposit carries a proof, so an empty one is rejected up front with the
-    // adapter's own error rather than reaching the coprocessor.
+    // Every legitimate deposit carries a proof. `FHEUtils.fromExternal` rejects an empty one before
+    // the coprocessor is called.
     it("rejects an empty inputProof (the handle would skip the coprocessor's type check)", async () => {
       const {
         wallets, fhevm, deployWrapper, fundAndApprove
@@ -130,9 +130,10 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
     });
 
-    // The empty-proof gate and the typed import sit outside the overridable freshness hook, so a
-    // subclass that relaxes reuse cannot relax the type check that closes the Bool/euint64 attacks.
-    it("keeps the empty-proof gate on a subclass that permits handle reuse", async () => {
+    // The empty-proof check and the typed import sit in `_verifyRecipient`, outside the overridable
+    // freshness hook, so a subclass that relaxes reuse cannot relax the type check that closes the
+    // Bool/euint64 attacks.
+    it("keeps the empty-proof check on a subclass that permits handle reuse", async () => {
       const {
         publicClient, wallets, store, confidentialWrapper, fhevm
       } = await boot();

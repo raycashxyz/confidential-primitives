@@ -9,11 +9,11 @@ import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC798
  * @dev A hostile ERC-7984: it moves funds like a normal token but returns a handle of the
  *      attacker's choosing instead of the amount it transferred.
  *
- *      Handles are global rather than namespaced per token, so without a provenance check the
+ *      Handles are global rather than namespaced per token, so without the returned-handle check the
  *      victim's `limit`/`spent` ciphertext flows into the attacker's own permission accounting and
  *      is then granted to them for decryption. `stolenHandle` is a handle this
  *      contract was never authorized on, which is what
- *      {RecurringAllowance-_isTokenAuthored} detects.
+ *      {FHEUtils-isAuthorizedOn} detects.
  */
 contract MockHandleStealingToken is ZamaEthereumConfig, ERC7984 {
     euint64 private _stolenHandle;

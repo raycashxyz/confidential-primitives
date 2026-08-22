@@ -8,46 +8,39 @@ import {FheType} from "@fhevm/solidity/lib/FheType.sol";
 /**
  * @title FHEUtils
  * @author Valerio Leo (@valeriohq)
- * @notice Helpers for fhEVM contracts that handle ciphertexts they did not create.
- *
- *         Extends fhevm-solidity with what that library leaves to the caller. Import both. Sections
- *         below are INPUTS, PROVENANCE and REDUCTIONS.
- *
- *         VERSION COUPLING. {fromExternal} depends on the BEHAVIOUR of `FHEVMExecutor.verifyInput`,
- *         namely that it grants ACL access to its own `msg.sender` and to no one else, rather than only
- *         on its signature. That holds for fhevm-solidity 0.11.x. A release that changed it would break the
- *         guarantee with no compiler error, so the property is asserted directly in this library's
- *         tests. Keep them green across dependency bumps rather than trusting a version pin.
+ * @notice Companion to `@fhevm/solidity` for contracts that handle ciphertexts they did not create:
+ *         imports that grant access to the importing contract only, a check for handles an untrusted
+ *         contract returns, single-use tracking for input handles, and a depth-bounded sum.
+ * @dev {fromExternal} relies on `FHEVMExecutor.verifyInput` granting ACL access to its `msg.sender`
+ *      and to nobody else. That holds for fhevm-solidity 0.11.x and is asserted by this library's
+ *      tests, which must stay green across dependency bumps.
  */
 library FHEUtils {
+    /// @dev Handles a contract has already accepted, for inputs that must be single-use.
+    struct HandleSet {
+        mapping(bytes32 handle => bool) used;
+    }
+
+    /// @dev {fromExternal} was given an empty `inputProof`.
+    error MissingInputProof();
+
     // -----------------------------------------------------------------------
-    // INPUTS: import a caller-supplied ciphertext without granting them access
+    // Inputs
     // -----------------------------------------------------------------------
 
     /**
      * @dev Import an external ciphertext, verifying `inputProof` against `user` and granting ACL
-     *      access to the CALLING CONTRACT ONLY. Use in place of `FHE.fromExternal` wherever a
-     *      contract accepts a ciphertext from a caller.
+     *      access to the calling contract only. The access is transient. Persist it with
+     *      `FHE.allowThis` before storing the handle.
      *
-     *      `FHE.fromExternal` ends with an `IACL.allowTransient(result, msg.sender)` in the calling
-     *      contract's frame, so the submitter also gets transient access. An EOA cannot use that, since
-     *      transient authorization dies with the transaction, but a CONTRACT submitter, still
-     *      executing in the same transaction, can promote it with `FHE.allow` or publish the value
-     *      with `FHE.makePubliclyDecryptable`, then read a plaintext it was never meant to see.
+     *      `FHE.fromExternal` also grants the submitter transient access, which a contract submitter
+     *      can promote with `FHE.allow` inside the same transaction and use to decrypt a value it was
+     *      only meant to carry. This import makes no such grant. The proof binding is unchanged.
+     *      `user` is verified against the proof, so pass `msg.sender` unless the ciphertext is meant
+     *      to be submittable by someone else.
      *
-     *      Passing the expected {FheType} also closes `FHE.fromExternal`'s empty-proof branch, which
-     *      returns a handle VERBATIM after only an ACL check and lets a caller land a handle of any
-     *      type in a typed slot. Here a mismatch reverts `InvalidType` at the coprocessor, and an
-     *      empty proof reverts `EmptyInputProof` at the input verifier.
-     *
-     *      The proof binding is UNCHANGED: `user` is still verified against the proof, so the
-     *      ciphertext stays submittable only by the party it was issued to. Pass `msg.sender` unless
-     *      you have a specific reason not to. Naming an address that is not the submitter makes the
-     *      ciphertext bearer-submittable by anyone.
-     *
-     *      The grant this makes is the calling contract's TRANSIENT access. Persist it with
-     *      `FHE.allowThis` wherever the handle is stored, and pass it on with `FHE.allow` to anyone
-     *      entitled to read the plaintext, which for a value the caller chose themselves is usually them.
+     *      The expected type travels to the coprocessor, which reverts `InvalidType` on a mismatch.
+     *      An empty proof reverts {MissingInputProof}.
      * @param user The address `inputProof` is bound to, normally `msg.sender`.
      */
     function fromExternal(
@@ -69,58 +62,57 @@ library FHEUtils {
     }
 
     // -----------------------------------------------------------------------
-    // PROVENANCE: is a handle received from an untrusted contract its own
+    // Returned handles
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Whether `author` is ACL-authorized on `handle`, which is the check to run on any ciphertext
-     *      an untrusted contract HANDS BACK to you.
+     * @dev Whether `account` holds ACL access to an initialized `handle`. Run it on every ciphertext
+     *      an untrusted contract returns, before folding that ciphertext into your own state or
+     *      granting it onward.
      *
-     *      Handles are global rather than namespaced per contract, so a hostile callee can return a
-     *      handle belonging to somebody else, one it read from a public getter or an event.
-     *      Folding that into your own state and then granting it to a caller launders a third party's
-     *      ciphertext into a value that caller can decrypt.
-     *
-     *      A contract is always authorized on a value it computed, and cannot grant itself access to
-     *      one it did not, so `isAllowed(handle, author)` separates the two. The guarantee is
-     *      that anything which passes is something the callee could already read, and that is the
-     *      bar that matters. A callee cannot launder a handle it holds no access to, and one it does
-     *      hold access to, including any you granted it transiently for the call, it could leak by
-     *      other means anyway. The initialization check rejects the zero handle, which no
-     *      computation returns. This is the mirror of the check fhEVM tokens apply to amounts handed
-     *      IN (OpenZeppelin's `ERC7984UnauthorizedUseOfEncryptedAmount`).
-     *
-     *      Two things it is not. It is not proof of unique authorship, since trivially encrypted handles
-     *      are content-addressed with no sender in the preimage, so two contracts that trivially
-     *      encrypt the same plaintext share one handle and both pass, which is harmless since a trivial
-     *      encryption carries no secret. And a `false` result means the callee is misbehaving, not
-     *      that the call failed. Decide whether that is worth aborting for.
+     *      Handles are global, so a hostile callee can return one it read from another contract's
+     *      getter or event. A contract cannot grant itself access it does not hold, so a `true`
+     *      result means the callee returned a value it could already read, and a `false` result is
+     *      evidence of misbehaviour rather than of a failed call. Trivially encrypted handles are
+     *      content-addressed, so two contracts that trivially encrypt the same plaintext share one
+     *      handle and both pass, which leaks nothing.
      */
-    function isAuthoredBy(euint64 handle, address author) internal view returns (bool) {
-        return FHE.isInitialized(handle) && FHE.isAllowed(handle, author);
+    function isAuthorizedOn(euint64 handle, address account) internal view returns (bool) {
+        return FHE.isInitialized(handle) && FHE.isAllowed(handle, account);
     }
 
-    /// @dev `eaddress` overload of {isAuthoredBy}.
-    function isAuthoredBy(eaddress handle, address author) internal view returns (bool) {
-        return FHE.isInitialized(handle) && FHE.isAllowed(handle, author);
+    /// @dev `eaddress` overload of {isAuthorizedOn}.
+    function isAuthorizedOn(eaddress handle, address account) internal view returns (bool) {
+        return FHE.isInitialized(handle) && FHE.isAllowed(handle, account);
     }
 
     // -----------------------------------------------------------------------
-    // REDUCTIONS: aggregate many ciphertexts without a long dependency chain
+    // Single-use handles
+    // -----------------------------------------------------------------------
+
+    /// @dev Whether `handle` has never been marked used in `set`.
+    function isFresh(HandleSet storage set, bytes32 handle) internal view returns (bool) {
+        return !set.used[handle];
+    }
+
+    /// @dev Mark `handle` used in `set` and report whether it was fresh. A caller enforcing
+    ///      single-use reverts on `false`. One permitting reuse ignores the result.
+    function markUsed(HandleSet storage set, bytes32 handle) internal returns (bool wasFresh) {
+        wasFresh = !set.used[handle];
+        set.used[handle] = true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Reductions
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Sum `xs` with a pairwise binary-tree reduction, in place.
+     * @dev Sum `xs` by pairwise reduction, in place, consuming `xs`.
      *
-     *      fhEVM meters two budgets per transaction: total HCU, and the DEPTH of the longest
-     *      dependency chain. A serial accumulator (`acc = add(acc, x)`) is a chain of N adds, so it
-     *      hits the depth cap long before the total one and puts a hard ceiling on N. Reducing
-     *      pairwise keeps the critical path at ceil(log2 N) adds, which moves the binding limit back
-     *      to total HCU.
-     *
-     *      Reduces IN PLACE, into the same memory, rather than allocating a new array per level, so
-     *      `xs` is consumed. Do not reuse it afterwards. An empty input sums to a trivially encrypted
-     *      zero, on which the caller holds only transient access.
+     *      fhEVM meters total HCU and the depth of the longest dependency chain per transaction. A
+     *      serial accumulator is a chain of N adds and hits the depth budget first. Pairwise
+     *      reduction keeps the chain at ceil(log2 N), so the total budget is what bounds N. An empty
+     *      input returns a trivial encryption of zero, with transient access only.
      */
     function sum(euint64[] memory xs) internal returns (euint64) {
         uint256 n = xs.length;
@@ -141,16 +133,15 @@ library FHEUtils {
 
     // -----------------------------------------------------------------------
 
-    /// @dev Resolves the executor through the same coprocessor config every `FHE.*` op uses, so it
-    ///      tracks whatever config the contract installed. MUST stay `internal`/`private` (inlined):
-    ///      the executor grants ACL to ITS caller, which is the importing contract only while this
-    ///      runs in that contract's own frame.
+    /// @dev Inlined into the calling contract, so the executor sees that contract as `msg.sender`
+    ///      and grants access to it alone. Keep it `private`.
     function _verifyInput(
         bytes32 handle,
         bytes calldata inputProof,
         address user,
         FheType expectedType
     ) private returns (bytes32) {
+        if (inputProof.length == 0) revert MissingInputProof();
         IFHEVMExecutor coprocessor = IFHEVMExecutor(Impl.getCoprocessorConfig().CoprocessorAddress);
         return coprocessor.verifyInput(handle, user, inputProof, expectedType);
     }

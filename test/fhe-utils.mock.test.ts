@@ -9,7 +9,7 @@
 import {
   describe, it, expect, beforeAll, beforeEach
 } from "vitest";
-import { parseEventLogs } from "viem";
+import { parseEventLogs, toHex } from "viem";
 
 import { createHarness } from "./setup/harness";
 import type { Harness } from "./setup/harness";
@@ -101,9 +101,25 @@ describe("FHEUtils", () => {
         "InvalidType",
       );
     });
+
+    // The library rejects an empty proof itself, before the coprocessor is called, so every
+    // consumer gets the same error without a gate of its own.
+    it("rejects an empty proof before reaching the coprocessor", async () => {
+      const { contract, alice, fhevm } = await boot();
+      const [handle] = await encryptValues(
+        fhevm.instance, [{
+          type: "add64",
+          value: 42n
+        }], contract.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        contract.write.importAndReportAccess([handle, "0x"], txOpts(alice.account)),
+        "MissingInputProof",
+      );
+    });
   });
 
-  describe("isAuthoredBy", () => {
+  describe("isAuthorizedOn", () => {
     // The laundering shape is a handle some OTHER contract is authorized on, returned by a callee that
     // is not. The check must separate the two even though both handles are real, initialized and
     // allowed to somebody.
@@ -122,13 +138,13 @@ describe("FHEUtils", () => {
 
       await send(contract.write.produce([7n], fheTxOpts(alice.account)));
       const own = await contract.read.lastResult();
-      expect(await contract.read.authoredHere([own])).toBe(true);
+      expect(await contract.read.authorizedHere([own])).toBe(true);
 
       // A handle the OTHER harness produced and is allowed on. This one never touched it.
       await send(other.write.produce([9n], fheTxOpts(alice.account)));
       const theirs = await other.read.lastResult();
-      expect(await other.read.authoredHere([theirs])).toBe(true);
-      expect(await contract.read.authoredHere([theirs])).toBe(false);
+      expect(await other.read.authorizedHere([theirs])).toBe(true);
+      expect(await contract.read.authorizedHere([theirs])).toBe(false);
 
       // And a handle nobody on-chain is allowed on, a client-side encryption never imported.
       const [foreign] = await encryptValues(
@@ -137,7 +153,29 @@ describe("FHEUtils", () => {
           value: 7n
         }], alice.account.address, alice.account.address,
       );
-      expect(await contract.read.authoredHere([foreign])).toBe(false);
+      expect(await contract.read.authorizedHere([foreign])).toBe(false);
+    });
+  });
+
+  describe("HandleSet", () => {
+    // Explicit gas: tevm's estimate under-shoots the second, same-value write and OOG-reverts it.
+    it("reports a handle fresh until marked, and marking reports whether it was fresh", async () => {
+      const { contract, send, alice } = await boot();
+      const handle = toHex(1n, { size: 32 });
+      const markedFresh = (receipt: Awaited<ReturnType<typeof send>>) => {
+        const [marked] = parseEventLogs({
+          abi: contract.abi,
+          logs: receipt.logs,
+          eventName: "HandleMarked"
+        });
+        if (!marked) throw new Error("no HandleMarked event");
+        return marked.args.wasFresh;
+      };
+
+      expect(await contract.read.isFresh([handle])).toBe(true);
+      expect(markedFresh(await send(contract.write.markUsed([handle], fheTxOpts(alice.account))))).toBe(true);
+      expect(await contract.read.isFresh([handle])).toBe(false);
+      expect(markedFresh(await send(contract.write.markUsed([handle], fheTxOpts(alice.account))))).toBe(false);
     });
   });
 

@@ -27,7 +27,7 @@ interface IRecurringAllowance {
      */
     struct Permission {
         /// @dev Stable identifier, unique across all users. Indices shift (swap-and-pop),
-        ///      ids never do. State-changing calls that take an index also take the id.
+        ///      ids never do. Use the returned id to re-address a permission after enumeration.
         uint256 id;
         /// @dev Encrypted per-period spending limit.
         euint64 limit;
@@ -144,10 +144,6 @@ interface IRecurringAllowance {
     ///      cannot be a value the token computed. Accepting it would launder a third party's
     ///      ciphertext into the caller's own decryptable state.
     error InvalidReturnedHandle();
-    /// @dev A permission-creating call was given an empty `inputProof`. Creation always needs a
-    ///      real proof so the coprocessor type-checks the limit as `Uint64`. Only
-    ///      {RecurringAllowance-updatePermission} reads an empty proof as "leave the limit alone".
-    error MissingInputProof();
 
     /// @notice A new permission was created.
     event PermissionSet(

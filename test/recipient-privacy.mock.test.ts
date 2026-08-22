@@ -8,7 +8,7 @@
  * to a persistent `FHE.allow` or a public `FHE.makePubliclyDecryptable` before the transaction ends,
  * then decrypt the recipient off-chain.
  *
- * {StealthWrapAdapter._importRecipient} imports the ciphertext through `FHEUtils.fromExternal`,
+ * {StealthWrapAdapter._verifyRecipient} imports the ciphertext through `FHEUtils.fromExternal`,
  * which calls the coprocessor's `verifyInput` directly, so the only ACL grant goes to the adapter, never to the depositor. These
  * tests drive the exact attack from a malicious contract depositor and assert it gets nothing:
  *   - the depositor is NOT allowed on the recipient handle right after depositing, and

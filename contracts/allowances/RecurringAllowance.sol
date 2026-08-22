@@ -195,20 +195,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @dev Import a permission's encrypted limit. Both creation paths route through here.
-     *
-     *      {FHEUtils-fromExternal} passes the expected `Uint64` to the coprocessor, so a handle of any
-     *      other type reverts `InvalidType` before it can become `Permission.limit`. That matters
-     *      because a non-`Uint64` limit makes every later `FHE.le` against it revert inside
-     *      `_evaluatePermissions`, which runs BEFORE the try/catch in {_trySpend}: one poisoned payer
-     *      would abort an entire {tryTransferFrom} batch rather than being skipped.
-     *
-     *      The empty-proof rejection is kept as a first line. Creation always supplies a
-     *      limit, and failing here is cheaper and names this contract's own error. Only
-     *      {updatePermission} reads an empty proof as a sentinel ("leave the limit unchanged"),
-     *      behind its own `length > 0` gate.
+     *      {FHEUtils-fromExternal} passes the expected `Uint64` to the coprocessor, so a handle of
+     *      any other type reverts `InvalidType` before it can become `Permission.limit`, where it
+     *      would make every later `FHE.le` revert inside {_evaluatePermissions} and abort whole
+     *      {tryTransferFrom} batches. An empty proof reverts {FHEUtils-MissingInputProof}. Only
+     *      {updatePermission} reads an empty proof as "leave the limit unchanged".
      */
     function _verifyLimit(externalEuint64 limit, bytes calldata inputProof) private returns (euint64) {
-        if (inputProof.length == 0) revert MissingInputProof();
         return FHEUtils.fromExternal(limit, inputProof, msg.sender);
     }
 
@@ -453,9 +446,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         they execute obliviously and move an encrypted zero, exactly as in
      *         {transferFrom}.
      *
-     *         Leniency does NOT extend to a token that returns a handle it is not authorized on.
-     *         That reverts `InvalidReturnedHandle` and takes the whole batch with it. See
-     *         {_isTokenAuthored} and the note at the call site for why this failure is escalated
+     *         A token that returns a handle it is not authorized on reverts `InvalidReturnedHandle`
+     *         and takes the whole batch with it. See {_trySpend} for why that failure is escalated
      *         rather than skipped.
      * @dev Malformed input proofs still revert the whole call, since the import is not
      *      catchable, as does a `token` address with no code, since the compiler's
@@ -531,7 +523,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
         FHE.allowTransient(eAmount, permit.token);
         transferred = IERC7984(permit.token).confidentialTransferFrom(owner, to, eAmount);
-        if (!_isTokenAuthored(permit.token, transferred)) revert InvalidReturnedHandle();
+        if (!FHEUtils.isAuthorizedOn(transferred, permit.token)) revert InvalidReturnedHandle();
         FHE.allowTransient(transferred, msg.sender);
 
         emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
@@ -665,9 +657,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         // The token computes over the handle during this call only.
         FHE.allowTransient(eTransferAmount, token);
         transferred = IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount);
-        // Reject a handle the token is not authorized on before it reaches `_recordSpend`. See
-        // {_isTokenAuthored} for why an unauthorized handle is a confidentiality leak, not a nuisance.
-        if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
+        // Reject a handle the token is not authorized on before it reaches `_recordSpend`. `token`
+        // is caller-supplied, and this contract is authorized on every user's `limit` and `spent`,
+        // all public through {getPermission} and {PermissionSet}. A token that returned a victim's
+        // `limit` would have `_recordSpend` compute `FHE.add(ownSpent, victimLimit)`, which passes
+        // because this contract is allowed on both, and grant the sum to the attacker, who knows
+        // their own `spent`. {permitTransferFrom} forwards the handle straight to `msg.sender`.
+        if (!FHEUtils.isAuthorizedOn(transferred, token)) revert InvalidReturnedHandle();
 
         _recordSpend(from, token, msg.sender, transferred);
 
@@ -720,7 +716,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             //
             // The cost is one-sided. A single hostile token kills the honest items beside it.
             // Screen tokens before batching, or submit suspect ones in their own call.
-            if (!_isTokenAuthored(token, transferred)) revert InvalidReturnedHandle();
+            if (!FHEUtils.isAuthorizedOn(transferred, token)) revert InvalidReturnedHandle();
             _recordSpend(from, token, msg.sender, transferred);
             FHE.allowTransient(transferred, msg.sender);
             emit AllowanceTransfer(from, to, token, msg.sender, transferred);
@@ -832,29 +828,6 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     // -----------------------------------------------------------------------
     // Shared helpers
     // -----------------------------------------------------------------------
-
-    /**
-     * @dev Could `token` have computed `handle`? {FHEUtils-isAuthoredBy} is the general check and
-     *      explains the mechanism. What follows is why THIS contract cannot skip it.
-     *
-     *      `token` is a caller-supplied address, and this contract calls `FHE.allowThis` on every
-     *      user's `limit` and `spent`, so it is permanently authorized on all of them, and those
-     *      handles are public, returned by {getPermission} and emitted in {PermissionSet}. An
-     *      attacker registers a permission on a token they wrote, has it return a victim's `limit`
-     *      handle, and {_recordSpend} computes `FHE.add(ownSpent, victimLimit)`, which passes
-     *      because WE are allowed on both, then grants the sum to the attacker, who knows their own
-     *      `spent` and subtracts it. {permitTransferFrom} is more direct still. It forwards the
-     *      returned handle straight to `msg.sender` via `allowTransient`, which a contract caller
-     *      persists.
-     *
-     *      Uninitialized is rejected for a second reason here. Such a handle would revert inside
-     *      `_recordSpend`'s `FHE.add` anyway, and that revert sits in the lenient path's success
-     *      branch, where it would show up as an uncontrolled failure rather than the deliberate
-     *      escalation at the call site.
-     */
-    function _isTokenAuthored(address token, euint64 handle) private view returns (bool) {
-        return FHEUtils.isAuthoredBy(handle, token);
-    }
 
     /// @dev EIP-712 verification for {PermitGrant} (ECDSA or ERC-1271). Binds `owner` and
     ///      the current {permitEpoch} into the digest (see the type-hash note).

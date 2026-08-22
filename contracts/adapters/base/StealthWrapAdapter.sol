@@ -14,106 +14,47 @@ import {FHEUtils} from "../../fhe/FHEUtils.sol";
  * @title StealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper.
+ * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper. A deposit
+ *         pulls clear ERC-20 from the depositor, wraps it into confidential balance held by this
+ *         contract and records an encrypted recipient. {finalizeWrap} homomorphically selects the
+ *         deposits matching a cleartext recipient and transfers their encrypted sum.
  *
- *         This contract does not implement an ERC7984 token. It escrows confidential
- *         balances of `CONFIDENTIAL_WRAPPER`: initWrap pulls clear ERC20 from the
- *         depositor, wraps it into confidential balance owned by this contract, and
- *         records an encrypted recipient. finalizeWrap variants homomorphically select
- *         matching deposits and transfer the resulting confidential balance to the
- *         cleartext recipient.
+ * @dev Recipient privacy. The recipient encrypts their own address with the input proof bound to
+ *      the depositor and hands (handle, proof) to the depositor, who submits it. {_verifyRecipient}
+ *      imports the handle through {FHEUtils-fromExternal}, which grants ACL access to this adapter
+ *      only, so neither observers nor a contract depositor can read the recipient. Handles are
+ *      single-use by default, see {_consumeRecipientHandle}.
  *
- *         DEPOSITOR TRUST: THE RECIPIENT IS HIDDEN FROM THE CHAIN AND FROM THE DEPOSITOR.
- *         The obvious way to import the recipient, `FHE.fromExternal`, would only hide it from the
- *         chain. It expands to `Impl.verify`, which after the coprocessor proof check runs
- *         `IACL.allowTransient(result, msg.sender)`, and inside {initWrap} that `msg.sender` is the
- *         depositor. An EOA depositor gains nothing from that transient grant, since it dies with the
- *         transaction, but a CONTRACT depositor could, still inside the same transaction, promote
- *         it with `FHE.allow` or publish it with `FHE.makePubliclyDecryptable` and read the recipient
- *         address the handshake conceals.
+ *      Depositor trust. Importing a handle proves it is well-formed and bound, not which address it
+ *      encrypts. A recipient who supplies an encryption of another address redirects the payment,
+ *      and one who supplies the zero address destroys it, since {finalizeWrap} rejects `address(0)`.
+ *      Treat a payment request as an authenticated message from the payee.
  *
- *         So {_verifyRecipient} imports the ciphertext through {FHEUtils-fromExternal}, which calls
- *         the coprocessor's `verifyInput` and stops there. The proof check and the binding are the
- *         same, with `contractAddress` this adapter and `userAddress` the depositor, and the only ACL
- *         grant made is the executor's own, to this adapter. The adapter persists that access with
- *         `FHE.allowThis`. The depositor is named inside the proof and receives nothing to escalate.
- *         The proof stays bound to the depositor, so no third party can submit it, the property
- *         {_consumeRecipientHandle} depends on, and the recipient is concealed from a contract
- *         depositor as well as from observers.
+ *      Exit amounts. Deposit amounts are public and rounded to the wrapper's `rate()`, and the
+ *      finalize event names the scanned set. A recipient who unwraps exactly what they were paid
+ *      lets anyone search the scanned amounts for the subset that sums to it.
  *
- *         That is the narrower guarantee that submitting a well-formed deposit does not leak the
- *         recipient to whoever submitted it, contract or not. Whether the depositor can TRUST the
- *         recipient is a separate question. See the next note.
+ *      Supported wrappers. ERC-7984 lets `wrap` and `confidentialTransfer` soft-fail, moving zero
+ *      or less than requested while the transaction succeeds. A soft-failing `wrap` would leave the
+ *      underlying with the wrapper and a zero-valued deposit here, with no refund path, so the
+ *      wrapper must be exact-or-revert on `wrap`. On finalize the requirement depends on the
+ *      adapter. The batched one is retry-safe, the continuous one also needs exact-or-revert on
+ *      `confidentialTransfer`. A bare OpenZeppelin `ERC7984ERC20Wrapper` qualifies. A hooked one is
+ *      as safe as the modules its admin can install.
  *
- *         THE DEPOSITOR CANNOT VERIFY THE ENCRYPTED RECIPIENT. Importing the handle proves the
- *         ciphertext is well-formed and correctly bound. It says nothing about the ADDRESS inside.
- *         The depositor pays before knowing what they paid for, so the handshake requires trusting
- *         whoever produced the handle. A recipient who supplies an encryption of someone else's
- *         address redirects the payment. One who supplies an encryption of the zero address destroys
- *         it outright, because {finalizeWrap} rejects `address(0)` in cleartext, so no permitted
- *         recipient can ever match that deposit and the funds stay in escrow forever.
- *
- *         Client-side validation does not close this, because the party doing the encrypting is the
- *         party being trusted, and the depositor cannot decrypt the handle to check. Treat a
- *         payment request as an authenticated message from the payee and verify it out of band.
- *
- *         EXACT EXITS FORFEIT UNLINKABILITY. Deposit amounts are public and rounded to the
- *         wrapper's `rate()`, and the finalize event names the scanned set. The payout itself stays
- *         encrypted here. But the recipient holds it, and unwrapping it publicly reveals its clear
- *         value. Anyone can then search the scanned amounts for a subset summing to it. When only
- *         one subset matches, that subset is the recipient's deposits. This happens after delivery,
- *         under the recipient's own key, so no on-chain control can prevent it. Recipients must
- *         avoid exiting the exact amount they were paid.
- *
- *         SUPPORTED WRAPPERS: SOFT-FAIL EXPOSURE DIFFERS BY PATH. ERC-7984 does not require `wrap`
- *         and `confidentialTransfer` to move exactly what was asked. An operation may SOFT-FAIL,
- *         returning an encrypted zero (or less than requested) while the transaction succeeds
- *         (OpenZeppelin's own transfer is exact-or-zero via `FHESafeMath`, not exact-or-revert). How
- *         much that matters depends on the path:
- *
- *         - deposit (BOTH adapters, still needs exact-or-revert). {_wrapIntoEscrow} pulls the
- *           depositor's underlying, then wraps. OpenZeppelin's wrapper moves the underlying BEFORE
- *           `_mint`, so on an `ERC7984Hooked` wrapper a rejecting mint hook can substitute an
- *           encrypted zero instead of reverting. The adapter records a zero-valued deposit while the
- *           wrapper has kept the underlying, and there is no refund path. The shortfall is a
- *           cleartext underlying amount that cannot be un-pulled on an encrypted result.
- *         - finalize (differs). The batched adapter is RETRY-SAFE: it pays `matched - claimed` and
- *           credits back only what moved, so a soft-failed or partial transfer leaves the
- *           remainder claimable (see {BatchedStealthWrapAdapter-finalizeWrap}). The continuous
- *           adapter is NOT: it consumes deposits by zeroing them before the transfer, and a flat pool
- *           cannot attribute a partial back to individual deposits, so a soft-fail there destroys the
- *           claim. It keeps the exact-or-revert (at least all-or-nothing) finalize requirement. See
- *           its docs.
- *
- *         So the deployment constraint is that any wrapper this points at must be exact-or-revert on
- *         `wrap`, and also on `confidentialTransfer` unless the adapter's finalize path is
- *         retry-safe. A bare OZ `ERC7984ERC20Wrapper` over a sufficient escrow balance qualifies, since it
- *         only soft-fails to zero on an insufficient balance, which finalize never hits. A hooked
- *         one is only as safe as the modules its admin can install.
- *
- *         REENTRANCY: both helpers make external calls, but on OPPOSITE sides of the state they
- *         guard, so implementations must reason about them separately. Either way the public
- *         {initWrap} and {finalizeWrap} MUST be `nonReentrant`, as the bundled adapters are.
- *
- *         - {_wrapIntoEscrow} calls out (safeTransferFrom / wrap) BEFORE the caller records its
- *           deposit entry, so a re-entrant call would see escrow that no deposit yet accounts for.
- *         - {_transferWrapped} is the other way round. The external `confidentialTransfer` sits next
- *           to the claim commit, and the ordering differs by adapter. The continuous adapter zeroes
- *           matched amounts BEFORE the transfer, optimistically, since a revert unwinds it atomically. The
- *           batched adapter credits its encrypted `claimed` ledger AFTER the transfer, because the
- *           credit is the returned amount, so it relies on `nonReentrant` to stop a
- *           re-entrant finalize from reading the stale ledger and double-paying. Either ordering is
- *           safe ONLY under the guard. A derived finalizer that drops `nonReentrant` exposes a
- *           double-claim on either ordering.
+ *      Reentrancy. {_wrapIntoEscrow} calls out before the caller records its deposit and
+ *      {_transferWrapped} calls out next to the claim commit, so both must run inside a
+ *      `nonReentrant` entrypoint.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using FHEUtils for FHEUtils.HandleSet;
 
     IERC7984ERC20Wrapper public immutable CONFIDENTIAL_WRAPPER;
     euint64 public immutable E_ZERO;
 
-    /// @dev Encrypted-recipient handles already spent on a deposit. See {_verifyRecipient}.
-    mapping(bytes32 handle => bool) private _usedRecipientHandles;
+    /// @dev Recipient handles that have already funded a deposit.
+    FHEUtils.HandleSet internal _recipientHandles;
 
     constructor(IERC7984ERC20Wrapper confidentialWrapper_) {
         if (address(confidentialWrapper_) == address(0)) revert ZeroAddress();
@@ -121,8 +62,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         address underlying_ = confidentialWrapper_.underlying();
         if (underlying_ == address(0)) revert ZeroAddress();
 
-        // rate() is the wrap divisor used in _wrapIntoEscrow (`amount % rate`). A zero rate
-        // would panic on every deposit. A valid OZ ERC7984ERC20Wrapper never returns 0.
+        // `rate()` divides every deposit in {_wrapIntoEscrow}. Zero would panic on each one.
         if (confidentialWrapper_.rate() == 0) revert InvalidRate();
 
         CONFIDENTIAL_WRAPPER = confidentialWrapper_;
@@ -135,136 +75,6 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return address(CONFIDENTIAL_WRAPPER);
     }
 
-    /**
-     * @dev Import a depositor-submitted encrypted recipient. Implementations MUST route every
-     *      `externalEaddress` through here rather than importing it themselves.
-     *
-     *      Two things happen, in order:
-     *
-     *        1. An EMPTY `inputProof` is rejected up front. Every legitimate deposit carries a real
-     *           proof (the recipient encrypts their address bound to `(this, depositor)`), so this
-     *           rejects nothing valid, and it gives the adapter's own `MissingInputProof` revert
-     *           before any external call.
-     *        2. The ciphertext is imported through {_importRecipient}, i.e. {FHEUtils-fromExternal}.
-     *           That grants ACL access to this adapter only, for the reasons in the DEPOSITOR TRUST note,
-     *           and passes the expected `Uint160` type to the coprocessor, which reverts `InvalidType`
-     *           for anything else.
-     *
-     *      That mandatory `Uint160` check is what keeps a hostile handle out of the pipeline. Three
-     *      attacks follow from a wrong-typed handle reaching the `eaddress` slot, and the typed import
-     *      closes all of them at the coprocessor:
-     *
-     *        - a `Bool` handle. Scalar `FHE.eq(eaddress, address)` skips the operand type check, and
-     *          an encrypted `true` then compares equal to EVERY non-zero recipient, so one poisoned
-     *          slot pays out once per attacker-chosen address, draining the pooled escrow.
-     *        - a `euint64` handle carrying the previous slot's own future payout. Handles are
-     *          content-addressed with no `msg.sender` in the preimage, so an attacker can weld each
-     *          slot's comparison onto the one before it. finalize then recomputes that chain
-     *          serially and trips the FHEVM 5M per-tx DEPTH budget, a counter distinct from the 20M
-     *          total, freezing a chosen recipient's escrow for good.
-     *        - any other wrong type. The continuous adapter's non-scalar `FHE.eq` type-checks both
-     *          operands and reverts `IncompatibleTypes` for every id set naming the slot, which
-     *          bricks those deposits permanently.
-     *
-     *      Handle freshness is delegated to {_consumeRecipientHandle}, which is where the single-use
-     *      policy and the grounds for overriding it are documented. Note the split. Neither the
-     *      empty-proof gate nor the direct-`verifyInput` import is part of that hook, and neither is
-     *      overridable, so a derived adapter can relax freshness without being handed a way to relax the
-     *      type check or to reintroduce the depositor-ACL leak.
-     *
-     *      THE CALLER MUST PERSIST ACCESS TO THE RETURNED HANDLE. What the import grants is the
-     *      adapter's TRANSIENT access, which expires with the transaction, so an adapter that stores
-     *      the handle without `FHE.allowThis` leaves a deposit finalize can never match again. This
-     *      is not done here because a handle that is imported and discarded needs no grant. The grant
-     *      belongs where the handle is stored. {BatchedStealthWrapAdapter-_recordBatchedDeposit} is
-     *      the worked example. It persists both ciphertexts it records.
-     */
-    function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
-        if (inputProof.length == 0) revert MissingInputProof();
-
-        eaddress verifiedRecipient = _importRecipient(eRecipient, inputProof);
-        _consumeRecipientHandle(FHE.toBytes32(verifiedRecipient));
-
-        return verifiedRecipient;
-    }
-
-    /**
-     * @dev Verify `eRecipient` against `inputProof` and return the `eaddress`, granting ACL access to
-     *      THIS adapter and to no one else. That containment is the whole of the recipient-privacy
-     *      fix, so this is `private`. It must not be bypassable or overridable.
-     *
-     *      The mechanism, and why `FHE.fromExternal` cannot be used here, are documented on
-     *      {FHEUtils}. In short, `fromExternal` adds a second ACL grant naming the DEPOSITOR, which a
-     *      contract depositor can promote to permanent access before the transaction ends. The
-     *      proof binding is unchanged either way. It still names the depositor, which is what stops
-     *      a third party submitting the handle, so only the leak goes away.
-     *
-     *      The caller then persists the adapter's access with `FHE.allowThis`.
-     */
-    function _importRecipient(externalEaddress eRecipient, bytes calldata inputProof) private returns (eaddress) {
-        return FHEUtils.fromExternal(eRecipient, inputProof, msg.sender);
-    }
-
-    /**
-     * @dev Freshness policy for an imported recipient handle, applied to every deposit that routes
-     *      through {_verifyRecipient}.
-     *
-     *      DEFAULT: SINGLE-USE. The handle is emitted in the deposit event so the recipient can spot
-     *      their own payment, which makes it a public tag. Submit the same one twice and observers
-     *      can cluster those deposits as "same unknown recipient" without breaking any encryption.
-     *      Once one member of the cluster is tied to a clear address, whether by a finalize, by timing or by
-     *      off-chain context, the rest follow. Batch boundaries and decoy choice do not remove a tag
-     *      that travels with the deposit itself. Enforcing freshness here rather than leaving it to
-     *      wallets costs one storage slot per deposit and cannot be forgotten. For the bundled
-     *      adapters it rejects nothing legitimate, since every payment request is supposed to carry its
-     *      own encryption, and a fresh encryption of the SAME address yields a different handle, so a
-     *      recipient can still be paid any number of times. Nor can it be griefed, because the
-     *      input proof binds a handle to its depositor, so no one else can spend it.
-     *
-     *      WHEN TO OVERRIDE: when the deposit path ALREADY publishes the grouping this protects. The
-     *      motivating case is a CREATE2 deposit-address flow that derives the address from the handle
-     *      (`salt == handle`), because that derivation is the only thing binding the address to a
-     *      recipient the payer cannot inspect. Decouple them and whoever drives the recovery path
-     *      picks the recipient after the money has arrived. Deposits there are already clustered by
-     *      the payer's clear ERC-20 transfer TO that public address, which lands before `initWrap`
-     *      runs, so single-use buys nothing while its failure mode is severe. The address cannot
-     *      rotate its handle, so a second (often accidental) transfer to a live deposit address
-     *      cannot be wrapped at all, leaving only a cleartext sweep, which doxxes the FIRST deposit.
-     *
-     *      The apparent middle ground does not exist. Re-wrapping under a fresh handle cannot be
-     *      authenticated. The deposit address cannot identify its own recipient, so its recovery
-     *      entrypoint must be permissionless, and a bystander can route a handle encrypting THEIR
-     *      address through it. Proving the replacement matches means either publicly decrypting
-     *      `FHE.eq(old, new)`, which reveals the very linkage single-use was protecting, or
-     *      `FHE.select`-ing to an unclaimable recipient on mismatch, which lets any bystander burn
-     *      the funds for the price of gas. Ranked by damage, reuse (linked, funds recoverable) beats
-     *      both. So permitting reuse there is the correct policy, not a concession.
-     *
-     *      Overrides should call {_recordRecipientHandle} so {recipientHandleUsed} stays truthful. No
-     *      extra event is needed, since each adapter already emits the handle in its deposit event, so a
-     *      repeat is visible to any indexer. And state it in the adapter's own docs. Deposits made
-     *      through it are publicly linkable by recipient, so it must not be presented as offering the
-     *      unlinkability the bundled adapters do.
-     */
-    function _consumeRecipientHandle(bytes32 handle) internal virtual {
-        if (_usedRecipientHandles[handle]) revert RecipientHandleAlreadyUsed();
-        _recordRecipientHandle(handle);
-    }
-
-    /// @dev Mark a handle as spent WITHOUT rejecting a repeat. Exists so an override of
-    ///      {_consumeRecipientHandle} that permits reuse can still keep {recipientHandleUsed}
-    ///      answering truthfully. The mapping itself stays private.
-    function _recordRecipientHandle(bytes32 handle) internal {
-        _usedRecipientHandles[handle] = true;
-    }
-
-    /// @notice Whether an encrypted-recipient handle has already funded a deposit here.
-    /// @dev Records history, not policy. An adapter that overrides {_consumeRecipientHandle} to
-    ///      permit reuse still reports `true` here for a handle it will accept again.
-    function recipientHandleUsed(bytes32 handle) external view returns (bool) {
-        return _usedRecipientHandles[handle];
-    }
-
     function underlying() public view returns (address) {
         return CONFIDENTIAL_WRAPPER.underlying();
     }
@@ -273,19 +83,54 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
+    /// @notice Whether an encrypted-recipient handle has already funded a deposit here. Reports
+    ///         history. An adapter that permits reuse still returns `true` for a handle it accepts again.
+    function recipientHandleUsed(bytes32 handle) external view returns (bool) {
+        return !_recipientHandles.isFresh(handle);
+    }
+
     /**
-     * @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
-     *      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
+     * @dev Import a depositor-submitted encrypted recipient and consume its handle. Every deposit
+     *      path must import through here. The import grants this adapter transient access only.
+     *      The caller persists it with `FHE.allowThis` where it stores the handle.
      *
-     *      NOTE FOR WRAPPERS WITH TRANSFER RESTRICTIONS: the adapter, not the depositor, is the
-     *      wrapper's counterparty. It pulls the underlying itself and then calls
-     *      `wrap(address(this), amount)`, so a wrapper that gates on `msg.sender` or the wrap
-     *      recipient, such as a deny-list, an allow-list or a compliance module, sees only this adapter and
-     *      passes. A depositor whom the wrapper would have blocked on a direct `wrap` can therefore
-     *      still originate one through here, as long as the plain ERC-20 transfer succeeds. That is
-     *      inherent to interposing a contract, not something the adapter can detect. A wrapper
-     *      operator who wants those checks enforced must apply them to the adapter's own deposit
-     *      path or decline to have an adapter pointed at it.
+     *      The coprocessor checks the handle's type against `Uint160`, which keeps a wrong-typed
+     *      handle out of the `eaddress` slot. A `Bool` handle would otherwise compare equal to every
+     *      non-zero recipient under the scalar `FHE.eq` and drain the pool, a `euint64` handle
+     *      chained onto another slot's payout would push finalize past the FHEVM depth budget, and
+     *      any other type would make the continuous adapter's `FHE.eq` revert for every id set
+     *      naming the slot.
+     */
+    function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress recipient) {
+        recipient = FHEUtils.fromExternal(eRecipient, inputProof, msg.sender);
+        _consumeRecipientHandle(FHE.toBytes32(recipient));
+    }
+
+    /**
+     * @dev Single-use policy for recipient handles. The handle is public in the deposit event so
+     *      the recipient can spot their payment, which makes a reused one a tag linking deposits to
+     *      the same unknown recipient. A fresh encryption of the same address is a different handle,
+     *      so a recipient can still be paid any number of times, and the depositor-bound proof means
+     *      nobody else can spend a handle.
+     *
+     *      Override to permit reuse only where the deposit path already links the deposits. The
+     *      CREATE2 deposit-address flow is the case. Its address derives from the handle
+     *      (`salt == handle`), so the handle cannot rotate, and the payer's clear transfer to that
+     *      address clusters the deposits before `initWrap` runs. An override should still call
+     *      `_recipientHandles.markUsed(handle)` so {recipientHandleUsed} reports history, and the
+     *      adapter must document that its deposits are linkable by recipient.
+     */
+    function _consumeRecipientHandle(bytes32 handle) internal virtual {
+        if (!_recipientHandles.markUsed(handle)) revert RecipientHandleAlreadyUsed();
+    }
+
+    /**
+     * @dev Pull `amount` underlying from `depositor`, rounded down to the wrapper's rate, and wrap
+     *      it into confidential balance held by this adapter. The adapter is the wrapper's
+     *      counterparty. A wrapper that gates `wrap` on its caller or recipient sees this adapter,
+     *      not the depositor, so such checks belong on the adapter's deposit path instead.
+     * @return wrappedUnderlying The underlying amount wrapped.
+     * @return wrappedAmount The resulting encrypted balance, persisted to this adapter.
      */
     function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
         if (amount == 0) revert ZeroAmount();
@@ -302,24 +147,13 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allowThis(wrappedAmount);
     }
 
-    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`. Where the
-    ///      claim state is committed relative to this call differs by adapter. The continuous one
-    ///      zeroes matched amounts BEFORE it, the batched one credits its encrypted `claimed` ledger
-    ///      AFTER it because the credit is this function's return value. Neither is safe without the
-    ///      guard. See the contract-level REENTRANCY note.
+    /// @dev Transfer `amount` of escrowed confidential balance to `recipient` and return what the
+    ///      wrapper reports it moved.
     function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
         transferred = CONFIDENTIAL_WRAPPER.confidentialTransfer(recipient, amount);
         FHE.allowThis(transferred);
-    }
-
-    /// @dev Tree-reduce `xs` to a single encrypted sum. See {FHEUtils-sum} for why the shape
-    ///      matters. `virtual` so a derived adapter can substitute its own reduction. Overrides must
-    ///      keep the FHE dependency depth sub-linear or finalize will hit the per-transaction depth
-    ///      budget as the scan grows.
-    function _sumTree(euint64[] memory xs) internal virtual returns (euint64) {
-        return FHEUtils.sum(xs);
     }
 
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual;

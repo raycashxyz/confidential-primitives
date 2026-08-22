@@ -7,13 +7,13 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {IStealthWrapAdapter} from "../interfaces/IStealthWrapAdapter.sol";
 
 /**
- * @dev The recipient-privacy attacker of the DEPOSITOR TRUST note on {StealthWrapAdapter}: a CONTRACT
+ * @dev The recipient-privacy attacker described on {StealthWrapAdapter}: a CONTRACT
  *      depositor that tries to unmask the recipient it just deposited for. It deposits through the
  *      adapter, then, still inside the same transaction while any transient ACL grant would still
  *      be live, tries to turn that access into something it can read off-chain.
  *
- *      Because {StealthWrapAdapter._importRecipient} imports the ciphertext via the coprocessor's
- *      `verifyInput` directly (never `FHE.fromExternal`), the adapter grants the depositor no ACL
+ *      Because {StealthWrapAdapter._verifyRecipient} imports the ciphertext through
+ *      `FHEUtils.fromExternal`, which grants access to the adapter alone, the depositor gets no ACL
  *      access at all. {depositAndReportSelfAccess} therefore reports `false`, and both escalation
  *      attempts revert `SenderNotAllowed` at the ACL. If the adapter had used `FHE.fromExternal`,
  *      the depositor would hold a transient grant here and all three would succeed.
