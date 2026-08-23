@@ -74,7 +74,6 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         if (ids.length < minDecoys) revert TooFewDecoys();
         if (recipient == address(0)) revert ZeroAddress();
 
-        eaddress encryptedRecipient = FHE.asEaddress(recipient);
         euint64[] memory payouts = new euint64[](ids.length);
 
         uint256 prevIndex;
@@ -85,7 +84,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
             prevIndex = i;
 
             Deposit storage d = deposits[i];
-            ebool isMatch = FHE.eq(d.recipient, encryptedRecipient);
+            ebool isMatch = FHE.eq(d.recipient, recipient);
             payouts[k] = FHE.select(isMatch, d.amount, E_ZERO);
 
             d.amount = FHE.select(isMatch, E_ZERO, d.amount);

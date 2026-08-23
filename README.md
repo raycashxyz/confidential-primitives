@@ -63,15 +63,15 @@ Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm
 
 | Anonymity set size `N` | Continuous finalize | Batched finalize |
 | ---: | ---: | ---: |
-| 1 | 488,380 | 439,529 |
-| 2 | 576,964 | 483,640 |
-| 4 | 753,970 | 571,699 |
-| 8 | 1,107,818 | 747,653 |
-| 16 | 1,815,357 | 1,099,400 |
-| 32 | 3,230,298 | 1,802,742 |
-| 48 | REVERT | 2,528,895 |
+| 1 | 478,947 | 440,514 |
+| 2 | 565,928 | 484,625 |
+| 4 | 739,728 | 572,684 |
+| 8 | 1,087,164 | 748,638 |
+| 16 | 1,781,879 | 1,100,386 |
+| 32 | 3,171,172 | 1,803,729 |
+| 48 | 4,560,801 | 2,507,389 |
 
-Batched is cheaper at every size and scales to a full 48-slot set; continuous costs more per decoy and reverts at 48 here. The gap is that continuous does more encrypted work per deposit: it matches against an encrypted recipient and rewrites each scanned deposit's amount in storage, where batched matches a cleartext recipient and uses a plain `(batch, recipient)` nullifier. That extra cost is the price of picking your own crowd: the same flexibility-versus-structure tradeoff, now in gas.
+Batched is cheaper at every size. The gap is that continuous does more encrypted work per deposit. It rewrites each scanned deposit's amount in storage, where batched leaves the slot alone and keeps one encrypted `claimed` total per `(batch, recipient)`. That extra cost is the price of picking your own crowd, the same flexibility-versus-structure tradeoff in gas.
 
 ### Privacy model
 
