@@ -71,6 +71,8 @@ Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implemen
 
 `ContinuousStealthWrapAdapter` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedStealthWrapAdapter` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
 
+`minDecoys` is a count of ids, not a measure of privacy. A finalized deposit's slot stays a legal id and is publicly indistinguishable from a live one, so choose decoys you have reason to believe are live, and seed the pool at deployment so the first depositors have `minDecoys` ids to finalize against.
+
 Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm-mocks`, comparing `finalizeWrap` (`N` is the anonymity-set size: selected ids for continuous, batch size for batched):
 
 | Anonymity set size `N` | Continuous finalize | Batched finalize |
