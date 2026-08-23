@@ -84,6 +84,40 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     );
   });
 
+  // Batch cost is the sum over items and one payer's tiers move the ceiling for everyone else, so
+  // processors need the count a spend would evaluate, not the stored count.
+  it("counts only the permissions a spend would evaluate", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+    const nowTs = await S.now();
+
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 100n
+    });
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 200n,
+      startTime: nowTs + 5000n // not started
+    });
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 300n,
+      endTime: nowTs + 100n // expires shortly
+    });
+
+    const key = [alice.account.address, token.address, bob.account.address] as const;
+    expect(await allowance.read.getPermissionCount(key)).toBe(3n);
+    expect(await allowance.read.activePermissionCount(key)).toBe(2n); // the future-dated one is out
+
+    await H.warpTime(200n);
+    expect(await allowance.read.getPermissionCount(key)).toBe(3n); // pruning needs a write
+    expect(await allowance.read.activePermissionCount(key)).toBe(1n); // expired one drops out too
+  });
+
   it("unlists a pair whose only permission expired and got pruned by a lenient spend", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;

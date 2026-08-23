@@ -514,6 +514,35 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         return _permissions[user][token][spender].length;
     }
 
+    /**
+     * @notice How many permissions a spend against this key would evaluate right now, which is the
+     *         count that drives its FHE cost. Excludes expired and not-yet-started entries, as
+     *         {_evaluatePermissions} does. {getPermissionCount} counts stored entries instead.
+     * @dev Size batches with this. Each item in {transferFrom} and {tryTransferFrom} evaluates its
+     *      own payer's permission set, so a batch's FHE cost is the sum over its items. From this
+     *      repo's benchmark a single transfer costs about 1,957,000 HCU at 2 active permissions,
+     *      3,301,000 at 4 and 5,989,000 at 8, against a 20,000,000 per-transaction budget, so
+     *      roughly 10, 6 and 3 items. Treat those figures as a floor. The same budget pays for the
+     *      token's own `confidentialTransferFrom`, which this contract cannot measure, and an
+     *      over-budget batch reverts in full. The separate 5,000,000 depth budget can also bind when
+     *      a batch hits the same (user, token, spender) key many times, since `spent` chains one
+     *      `FHE.add` per repeat.
+     */
+    function activePermissionCount(
+        address user,
+        address token,
+        address spender
+    ) external view returns (uint256 count) {
+        Permission[] storage permissions = _permissions[user][token][spender];
+        uint64 nowTs = uint64(block.timestamp);
+        uint256 len = permissions.length;
+        for (uint256 i = 0; i < len; ) {
+            Permission storage permission = permissions[i];
+            if (nowTs <= permission.endTime && nowTs >= permission.startTime) count++;
+            unchecked { ++i; }
+        }
+    }
+
     function getGrantedPairCount(address user) external view returns (uint256) {
         return _grantedPairs[user].length;
     }
