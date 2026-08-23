@@ -9,3 +9,4 @@ Docs:
 - a cheque moves the requested amount or an encrypted zero
 - a README Compatibility section states the Zama FHEVM requirements
 - `tryTransferFrom`'s permission maintenance, pruning and period resets, persists on a skipped item
+- `endTime` expiry is inclusive

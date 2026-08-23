@@ -130,7 +130,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @param startTime Grid anchor and activation time; 0 means `block.timestamp`.
      *        May be in the past (elapsed periods simply count from there).
      * @param endTime Inclusive expiry; 0 means `type(uint64).max` (no expiry).
-     *        Must be in the future and after `startTime`.
+     *        Must not be in the past, and must be after `startTime`. Expiry is INCLUSIVE, so
+     *        `endTime == block.timestamp` is accepted and leaves the permission active for the
+     *        rest of the current second.
      * @return permissionId Stable id of the new permission
      */
     function setPermission(
@@ -848,7 +850,9 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         delete _grantedPairIndex[user][pairKey];
     }
 
-    /// @dev A window is valid if it ends in the future and after it starts.
+    /// @dev A window is valid if it does not end in the past and ends after it starts. `endTime` is
+    ///      an INCLUSIVE expiry (active while `block.timestamp <= endTime`), so `endTime` equal to
+    ///      now is accepted.
     function _checkWindow(uint64 startTime, uint64 endTime) private view {
         if (endTime < uint64(block.timestamp)) revert InvalidEndTime();
         if (endTime <= startTime) revert InvalidEndTime();
