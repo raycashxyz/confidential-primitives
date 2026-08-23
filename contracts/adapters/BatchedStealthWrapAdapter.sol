@@ -44,15 +44,14 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  *         balance owned by this contract, then transferred to recipients on finalize.
  */
 contract BatchedStealthWrapAdapter is StealthWrapAdapter {
-    /// @dev Hard cap on batch size, set so {finalizeWrap} over ONE batch is PROVABLY
-    ///      completable — an unfinalizable batch would lock funds. finalize does a
-    ///      fixed amount of FHE work per slot (`eq` + `select` + tree `add`), so its
-    ///      binding limit is the FHEVM 20M TOTAL-HCU/tx budget: measured on the FHEVM
-    ///      coprocessor mocks (which meter HCU via the HCULimit host contract),
-    ///      56 slots fits and >=60 reverts; the analytic op-cost model agrees (~60).
-    ///      48 leaves ~15-20% headroom.
-    ///      NOTE the budget applies to TOTAL SLOTS SCANNED PER CALL: near the cap,
-    ///      finalize one batch per call; multi-batch calls suit smaller batch sizes.
+    /// @dev Hard cap on batch size, so one batch always finalizes within the FHEVM 20M HCU
+    ///      per-transaction budget. Finalize does fixed FHE work per slot (`eq`, `select` and a tree
+    ///      `add`). Measured on the coprocessor mocks, 56 slots fit and 60 revert, so 48 leaves
+    ///      15-20% headroom for the adapter's own work. The wrapper's `confidentialTransfer` spends
+    ///      from the same budget, and a hooked wrapper's admin can add modules after deposits are
+    ///      escrowed, so size `maxBatchDeposits` against the target wrapper's transfer cost and
+    ///      prefer a wrapper whose FHE cost cannot change. The budget is per call. Near the cap,
+    ///      finalize one batch per call.
     uint256 private constant MAX_BATCH_LIMIT = 48;
 
     uint256 public immutable maxBatchDeposits;

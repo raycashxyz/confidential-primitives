@@ -10,3 +10,4 @@ Docs:
 - a README Compatibility section states the Zama FHEVM requirements
 - `tryTransferFrom`'s permission maintenance, pruning and period resets, persists on a skipped item
 - `endTime` expiry is inclusive
+- size `maxBatchDeposits` and `minDecoys` against the target wrapper's transfer cost
