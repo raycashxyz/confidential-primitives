@@ -189,7 +189,11 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         if (batch.closed || batch.fillCount >= maxBatchDeposits) revert BatchAlreadyClosed();
         uint256 batchIndex = batch.fillCount;
 
+        // Persist access to both stored ciphertexts. A derived adapter may hold only transient
+        // authorization on `eAmount`, which would leave finalize unable to use it. Re-granting is
+        // idempotent.
         FHE.allowThis(verifiedRecipient);
+        FHE.allowThis(eAmount);
 
         slot = batchId * maxBatchDeposits + batchIndex;
         deposits[slot] = Deposit({

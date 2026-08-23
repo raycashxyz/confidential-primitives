@@ -16,6 +16,7 @@ import { getOrDeployMockUSDC } from "../../src/deployers/MockUSDC";
 import { getOrDeployMockERC7984ERC20Wrapper } from "../../src/deployers/MockERC7984ERC20Wrapper";
 import { getOrDeployBatchedStealthWrapAdapter } from "../../src/deployers/BatchedStealthWrapAdapter";
 import { getOrDeployMockBatchedStealthWrapAdapterExtension } from "../../src/deployers/MockBatchedStealthWrapAdapterExtension";
+import { getOrDeployMockTransientAmountAdapter } from "../../src/deployers/MockTransientAmountAdapter";
 import { getOrDeployMockReusableHandleAdapter } from "../../src/deployers/MockReusableHandleAdapter";
 
 const boot = useBatchedSuite();
@@ -182,6 +183,40 @@ describe("BatchedStealthWrapAdapter", () => {
         wrapper.write.initWrapFor([alice.account.address, AMOUNT, handle, "0x"], txOpts(alice.account)),
         "MissingInputProof",
       );
+    });
+
+    // `_recordBatchedDeposit` is advertised as the reusable hook for adapters that acquire funds
+    // some other way. Those can hold only transient authorization on the amount, which expires at
+    // the end of the transaction, so finalize could never touch the stored ciphertext again.
+    it("persists ACL access to eAmount for a subclass that supplies it transiently", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, fhevm, send
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockTransientAmountAdapter({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [1n, SEAL_DELAY, confidentialWrapper.address], // 1 slot -> closes on the first deposit
+        force: true,
+      });
+
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await send(wrapper.write.recordTransientAmountDeposit([
+        AMOUNT,
+        handle,
+        inputProof
+      ], fheTxOpts(alice.account)));
+      expect(await wrapper.read.batchClosed([0n])).toBe(true);
+
+      // A LATER transaction. The deposit-time transient grant is long gone, so this only works if
+      // the hook persisted access.
+      await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
+      // The finalize recorded alice's claim, which it could only compute if the hook had persisted
+      // ACL access to eAmount.
+      expect(await wrapper.read.finalized([0n, alice.account.address])).toBe(true);
     });
 
     it("lets a subclass override initWrap and record through the batched deposit hook", async () => {
