@@ -28,8 +28,10 @@ contract MockReusableHandleAdapter is BatchedStealthWrapAdapter {
     function initWrap(
         uint256 amount,
         externalEaddress eRecipient,
-        bytes calldata inputProof
+        bytes calldata inputProof,
+        bytes calldata extraData
     ) external override nonReentrant returns (uint256 slot) {
+        _requireCurrentBatch(extraData);
         eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);

@@ -52,11 +52,14 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         return deposits.length;
     }
 
+    /// @param extraData Must be empty. This adapter takes no options.
     function initWrap(
         uint256 amount,
         externalEaddress encryptedRecipient,
-        bytes calldata inputProof
+        bytes calldata inputProof,
+        bytes calldata extraData
     ) external override nonReentrant returns (uint256 depositIndex) {
+        if (extraData.length != 0) revert InvalidExtraData();
         eaddress verifiedRecipient = _verifyRecipient(encryptedRecipient, inputProof);
         if (!FHEUtils.isFreshForThis(FHE.toBytes32(verifiedRecipient))) revert RecipientHandleAlreadyUsed();
         (uint256 wrappedUnderlying, euint64 encryptedAmount) = _wrapIntoEscrow(msg.sender, amount);

@@ -138,7 +138,8 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
           await sendOk(contract.write.initWrap([
             AMOUNT,
             handle,
-            inputProof
+            inputProof,
+            "0x"
           ], fheTxOpts(alice.account)), `continuous initWrap #${i}`);
         }
 
@@ -164,7 +165,8 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
           await sendOk(contract.write.initWrap([
             AMOUNT,
             handle,
-            inputProof
+            inputProof,
+            "0x"
           ], fheTxOpts(alice.account)), `batched initWrap #${i}`);
         }
 

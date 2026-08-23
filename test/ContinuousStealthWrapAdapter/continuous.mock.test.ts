@@ -83,7 +83,8 @@ describe("ContinuousStealthWrapAdapter", () => {
     return sendOk(wrapper.write.initWrap([
       AMOUNT,
       handle,
-      inputProof
+      inputProof,
+      "0x"
     ], fheTxOpts(depositor.account)));
   };
 
@@ -117,8 +118,27 @@ describe("ContinuousStealthWrapAdapter", () => {
       alice.account.address,
     );
     await assertRevertsWith(
-      wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+      wrapper.write.initWrap([AMOUNT, handle, "0x", "0x"], txOpts(alice.account)),
       "MissingInputProof",
+    );
+  });
+
+  // This adapter takes no options, so a batch id meant for the batched adapter fails loudly instead
+  // of being silently ignored.
+  it("rejects non-empty extraData", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+    await fundAndApprove(wrapper, alice, 1n);
+
+    const { handle, inputProof } = await encryptRecipient(
+      H.fhevm.instance,
+      wrapper.address,
+      alice.account.address,
+      alice.account.address,
+    );
+    await assertRevertsWith(
+      wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x01"], txOpts(alice.account)),
+      "InvalidExtraData",
     );
   });
 

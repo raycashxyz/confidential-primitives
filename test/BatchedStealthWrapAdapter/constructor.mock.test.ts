@@ -6,7 +6,9 @@
 import {
   describe, it, expect
 } from "vitest";
-import { decodeEventLog, parseAbiItem, zeroHash } from "viem";
+import {
+  decodeEventLog, encodeAbiParameters, parseAbiItem, zeroHash
+} from "viem";
 
 import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
 import { encryptRecipient } from "../setup/fhe";
@@ -62,7 +64,7 @@ describe("BatchedStealthWrapAdapter", () => {
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
       await assertRevertsWith(
-        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        wrapper.write.initWrap([AMOUNT, handle, "0x", "0x"], txOpts(alice.account)),
         "MissingInputProof",
       );
     });
@@ -80,11 +82,11 @@ describe("BatchedStealthWrapAdapter", () => {
       const { handle, inputProof } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
-      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x"], fheTxOpts(alice.account)));
       expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
 
       await assertRevertsWith(
-        wrapper.write.initWrap([AMOUNT, handle, inputProof], txOpts(alice.account)),
+        wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x"], txOpts(alice.account)),
         "RecipientHandleAlreadyUsed",
       );
 
@@ -93,7 +95,7 @@ describe("BatchedStealthWrapAdapter", () => {
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
       expect(fresh.handle).not.toBe(handle);
-      await send(wrapper.write.initWrap([AMOUNT, fresh.handle, fresh.inputProof], fheTxOpts(alice.account)));
+      await send(wrapper.write.initWrap([AMOUNT, fresh.handle, fresh.inputProof, "0x"], fheTxOpts(alice.account)));
       expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
     });
 
@@ -119,11 +121,11 @@ describe("BatchedStealthWrapAdapter", () => {
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
 
-      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x"], fheTxOpts(alice.account)));
       // The handle is recorded as seen, since the view reports history, not policy...
       expect(await wrapper.read.recipientHandleUsed([handle])).toBe(true);
       // ...so the same handle is accepted again where the base adapter reverts.
-      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x"], fheTxOpts(alice.account)));
       expect(await wrapper.read.batchFillCount([0n])).toBe(2n);
       expect(await wrapper.read.batchClosed([0n])).toBe(true);
 
@@ -151,7 +153,7 @@ describe("BatchedStealthWrapAdapter", () => {
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
       await assertRevertsWith(
-        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        wrapper.write.initWrap([AMOUNT, handle, "0x", "0x"], txOpts(alice.account)),
         "MissingInputProof",
       );
     });
@@ -176,7 +178,7 @@ describe("BatchedStealthWrapAdapter", () => {
       );
 
       await assertRevertsWith(
-        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        wrapper.write.initWrap([AMOUNT, handle, "0x", "0x"], txOpts(alice.account)),
         "MissingInputProof",
       );
       await assertRevertsWith(
@@ -237,7 +239,7 @@ describe("BatchedStealthWrapAdapter", () => {
       const { handle, inputProof } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
-      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof], fheTxOpts(alice.account)));
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x"], fheTxOpts(alice.account)));
 
       const deposit = await wrapper.read.deposits([0n]);
       expect(deposit[0]).toBe(alice.account.address);
@@ -358,7 +360,8 @@ describe("BatchedStealthWrapAdapter", () => {
         wrapper.write.initWrap([
           rate - 1n,
           handle,
-          inputProof
+          inputProof,
+          "0x"
         ], txOpts(alice.account)),
         "ZeroAmount",
       );
@@ -371,7 +374,8 @@ describe("BatchedStealthWrapAdapter", () => {
       await send(wrapper.write.initWrap([
         rate + 1n,
         h2,
-        p2
+        p2,
+        "0x"
       ], fheTxOpts(alice.account)));
       const deposit = await wrapper.read.deposits([0n]);
       expect(deposit[1]).toBe(rate);
@@ -407,6 +411,45 @@ describe("BatchedStealthWrapAdapter", () => {
         .filter((name) => name === "WrapInitiated" || name === "BatchSealed");
 
       expect(ordered).toEqual(["WrapInitiated", "BatchSealed"]);
+    });
+
+    // Which batch a deposit joins is decided at execution, so anyone can fill the remaining slots
+    // ahead of a pending initWrap and push it into a fresh batch they then fill around it. A batch
+    // id in extraData pins the deposit to the batch the depositor inspected.
+    const pinTo = (batchId: bigint) => encodeAbiParameters([{ type: "uint256" }], [batchId]);
+    it("pins the deposit to the inspected batch through extraData, or reverts without moving funds", async () => {
+      const {
+        wallets, underlying, deployWrapper, fundAndApprove, initWrap, fhevm, send
+      } = await boot();
+      const { alice, bob } = wallets;
+      const { contract: wrapper } = await deployWrapper(2n);
+      await fundAndApprove(wrapper, alice, 1n);
+      await fundAndApprove(wrapper, bob, 2n);
+
+      // Alice inspects batch 0, but bob fills it first and it rolls over.
+      await initWrap(wrapper, bob, bob.account.address);
+      await initWrap(wrapper, bob, bob.account.address);
+      expect(await wrapper.read.currentBatchId()).toBe(1n);
+
+      const balanceBefore = await underlying.read.balanceOf([alice.account.address]);
+      const { handle, inputProof } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, inputProof, pinTo(0n)], txOpts(alice.account)),
+        "NotCurrentBatch",
+      );
+      expect(await underlying.read.balanceOf([alice.account.address])).toBe(balanceBefore);
+
+      // Malformed extraData is rejected by shape, before any funds move.
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, inputProof, "0x01"], txOpts(alice.account)),
+        "InvalidExtraData",
+      );
+
+      // Pinning the batch she can join works normally.
+      await send(wrapper.write.initWrap([AMOUNT, handle, inputProof, pinTo(1n)], fheTxOpts(alice.account)));
+      expect(await wrapper.read.batchFillCount([1n])).toBe(1n);
     });
 
     it("pulls underlying, records the deposit, and auto-closes a full batch", async () => {

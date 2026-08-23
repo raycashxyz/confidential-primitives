@@ -43,7 +43,7 @@ contract MockRecipientStealingDepositor is ZamaEthereumConfig {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external returns (uint256 id) {
-        id = adapter.initWrap(amount, eRecipient, inputProof);
+        id = adapter.initWrap(amount, eRecipient, inputProof, "");
         bool depositorAllowed = FHE.isAllowed(eaddress.wrap(externalEaddress.unwrap(eRecipient)), address(this));
         emit DepositorSelfAccess(id, depositorAllowed);
     }
@@ -54,7 +54,7 @@ contract MockRecipientStealingDepositor is ZamaEthereumConfig {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external returns (uint256 id) {
-        id = adapter.initWrap(amount, eRecipient, inputProof);
+        id = adapter.initWrap(amount, eRecipient, inputProof, "");
         FHE.makePubliclyDecryptable(eaddress.wrap(externalEaddress.unwrap(eRecipient)));
     }
 
@@ -65,7 +65,7 @@ contract MockRecipientStealingDepositor is ZamaEthereumConfig {
         externalEaddress eRecipient,
         bytes calldata inputProof
     ) external returns (uint256 id) {
-        id = adapter.initWrap(amount, eRecipient, inputProof);
+        id = adapter.initWrap(amount, eRecipient, inputProof, "");
         FHE.allow(eaddress.wrap(externalEaddress.unwrap(eRecipient)), address(this));
     }
 }

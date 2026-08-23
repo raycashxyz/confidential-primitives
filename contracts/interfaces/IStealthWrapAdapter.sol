@@ -26,6 +26,8 @@ interface IStealthWrapAdapter {
     ///      the bundled adapters because a reused one publicly links its deposits. Ask the recipient
     ///      for a fresh encryption.
     error RecipientHandleAlreadyUsed();
+    /// @dev `extraData` is not a shape this adapter accepts.
+    error InvalidExtraData();
 
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);
@@ -37,10 +39,13 @@ interface IStealthWrapAdapter {
 
     /// @notice Deposit clear ERC20 into escrow with an encrypted recipient.
     /// @dev The input proof must be bound to `(address(this), msg.sender)`.
+    /// @param extraData Adapter-specific options. Empty selects the default behaviour, and each
+    ///        adapter documents the encodings it accepts on its own `initWrap`.
     function initWrap(
         uint256 amount,
         externalEaddress encryptedRecipient,
-        bytes calldata inputProof
+        bytes calldata inputProof,
+        bytes calldata extraData
     ) external returns (uint256 id);
 
     /// @notice Finalize pending deposits, transferring their homomorphic sum to `recipient`.

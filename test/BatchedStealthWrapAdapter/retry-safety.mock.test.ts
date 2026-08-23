@@ -106,7 +106,8 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
     return send(adapter.write.initWrap([
       AMOUNT,
       handle,
-      inputProof
+      inputProof,
+      "0x"
     ], fheTxOpts(depositor.account)));
   };
 

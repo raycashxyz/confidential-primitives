@@ -150,23 +150,36 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Record a deposit into the current batch by pulling `amount` underlying
-     *         from `msg.sender` (who must have approved this wrapper). `inputProof`
-     *         must bind `eRecipient` to `(this, msg.sender)`.
-     *
-     *         Non-multiple amounts are rounded down through the configured wrapper's
-     *         rate. The recorded amount is the underlying actually wrapped into escrow.
-     * @return slot Global slot index of the new deposit.
+     * @notice Deposit `amount` underlying from `msg.sender`, who must have approved this adapter,
+     *         into the current batch. Amounts round down to the wrapper's rate, and the recorded
+     *         amount is what was wrapped.
+     * @param extraData Empty, or `abi.encode(uint256 expectedBatchId)` to pin the deposit to the
+     *        batch the depositor inspected. Which batch a deposit joins is decided at execution, so
+     *        anyone can fill the remaining slots ahead of the transaction and displace it into a
+     *        fresh batch they then fill themselves, which leaves the displaced deposit identifiable
+     *        at finalize. A pinned deposit reverts {NotCurrentBatch} instead. Pinning does not stop
+     *        an attacker co-depositing into the pinned batch, so judge the crowd before pinning,
+     *        which the cleartext depositors in {WrapInitiated} make possible.
+     * @return slot Slot index of the new deposit.
      */
     function initWrap(
         uint256 amount,
         externalEaddress eRecipient,
-        bytes calldata inputProof
+        bytes calldata inputProof,
+        bytes calldata extraData
     ) external virtual override nonReentrant returns (uint256 slot) {
+        _requireCurrentBatch(extraData);
         eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
         if (!FHEUtils.isFreshForThis(FHE.toBytes32(verifiedRecipient))) revert RecipientHandleAlreadyUsed();
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);
+    }
+
+    /// @dev Enforce the optional batch pin carried in `extraData`. Empty means unpinned.
+    function _requireCurrentBatch(bytes calldata extraData) internal view {
+        if (extraData.length == 0) return;
+        if (extraData.length != 32) revert InvalidExtraData();
+        if (abi.decode(extraData, (uint256)) != currentBatchId) revert NotCurrentBatch();
     }
 
     /**
