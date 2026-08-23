@@ -86,8 +86,11 @@ interface IRecurringAllowance {
 
     /**
      * @dev Signed authorization for a ONE-SHOT transfer up to an encrypted cap (the
-     *      "confidential cheque"). Consumed on submission regardless of the encrypted
-     *      outcome — a cheque against an insufficient balance still burns its nonce.
+     *      "confidential cheque"). Consumed on any SUCCESSFUL submission regardless of the
+     *      encrypted outcome, so a cheque against an insufficient but initialized balance still
+     *      burns its nonce. A token that REVERTS instead of returning an encrypted zero rolls the
+     *      nonce back with it, leaving the cheque submittable until `sigDeadline`. See
+     *      {RecurringAllowance-permitTransferFrom}.
      */
     struct PermitSpend {
         address token;

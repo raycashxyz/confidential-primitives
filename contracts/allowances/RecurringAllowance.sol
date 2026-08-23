@@ -428,11 +428,14 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *         signed encrypted cap of `permit.token` from `owner` to `to`. The spender chooses the
      *         `requested` amount at execution. The cap is enforced obliviously and all-or-nothing,
      *         so an over-cap request moves an encrypted zero rather than the cap.
-     * @dev Touches no stored permissions — this is a parallel, stateless rail (plus the
-     *      nonce bit). The nonce is consumed on submission REGARDLESS of the encrypted
-     *      outcome: a cheque against an insufficient balance is burned unspent (the
-     *      outcome cannot be read in cleartext). Like every spend path, requires this
-     *      contract to be an ERC-7984 operator for `owner` on the token.
+     * @dev Touches no stored permissions. Like every spend path it requires this contract to be an
+     *      ERC-7984 operator for `owner` on the token. The nonce is consumed when the call succeeds,
+     *      regardless of the encrypted outcome, so a cheque against an insufficient balance is
+     *      burned unspent. A token that reverts instead of returning an encrypted zero, as some do
+     *      on an uninitialized balance handle, rolls the nonce back and leaves the cheque
+     *      submittable until `sigDeadline`. Any retry stays bounded by the signed spender, recipient,
+     *      cap, epoch and deadline, and the owner can cancel it with {invalidateUnorderedNonces} or
+     *      {invalidateAllPermits}.
      * @param owner The signer whose funds move
      * @param permit The signed cheque parameters
      * @param capProof Proof for `permit.capHandle` (bound to `(this, permit.spender)`)

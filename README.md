@@ -156,7 +156,7 @@ Nonces are Permit2-style unordered bitmaps: any number of permits can be outstan
 
 Two caveats to design around:
 
-- **A submitted cheque burns its nonce regardless of the encrypted outcome.** The outcome cannot be read in cleartext, so a cheque drawn against an insufficient balance is consumed unspent — like a bounced paper cheque, the owner re-issues. (Gasless *grants* don't have this problem: a grant against an empty wallet just sits there until funded.)
+- **A successfully submitted cheque burns its nonce regardless of the encrypted outcome.** The outcome cannot be read in cleartext, so a cheque drawn against an insufficient balance is consumed unspent, like a bounced paper cheque, and the owner re-issues. A token call that reverts rolls the nonce back and leaves the cheque submittable until `sigDeadline`. Gasless *grants* don't have this problem, since a grant against an empty wallet just sits there until funded.
 - **How long an input proof stays submittable after signing is an operational property of the FHEVM gateway**, not of this contract. Size `sigDeadline` accordingly; for grants the natural pattern (spender submits immediately on receiving the signature) makes the window a non-issue.
 
 The user who signs sees only a `bytes32` handle — **only the client that encrypted the amount can show them the number they're committing to**, so the signing UI and the encryption client must be the same trusted surface.
