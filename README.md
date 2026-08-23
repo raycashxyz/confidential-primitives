@@ -13,13 +13,23 @@ Two primitives so far, and more will follow:
 - **[Stealth wrap adapters](#the-stealth-wrap-adapters)** — get funds *into* the confidential world without linking the deposit to its recipient.
 - **[`RecurringAllowance`](#recurringallowance)** — let a spender pull funds on a budget ("100 USDC/day") without publishing the budget.
 
+## Compatibility
+
+These are **Zama FHEVM** contracts, not implementation-agnostic ERC-7984 ones. ERC-7984 represents confidential amounts as opaque `bytes32` pointers and leaves how they're resolved and manipulated to the implementation, so it admits FHE, zero-knowledge systems, secure enclaves and more. Nothing here can work across that range, and ERC-7984 compliance alone is not enough to integrate. Concretely, both primitives require:
+
+- Zama's `euint64` / `eaddress` handle types and the FHEVM ACL, via `@fhevm/solidity` (`select`, `add`, `allow`, the coprocessor's `verifyInput`, …). A pointer that isn't a Zama handle won't resolve.
+- Handles returned by the token or wrapper to be valid operands in the *same* FHEVM deployment this contract is configured for.
+- Input proofs produced by the coprocessor and bound to `(contract, submitter)`.
+
+The stealth wrap adapters also require OpenZeppelin's wrapper shape (`underlying()` and `rate()`, which are `ERC7984ERC20Wrapper` extensions rather than ERC-7984 itself) and a wrapper that is [exact-or-revert](#how-it-works) where the adapter needs it. `RecurringAllowance` requires an ERC-7984 token with working `setOperator` / `confidentialTransferFrom` semantics on this FHEVM.
+
 ## The stealth wrap adapters
 
 An [`ERC7984`](https://docs.openzeppelin.com/confidential-contracts/token) confidential token keeps balances and transfer amounts encrypted. That part is solved, and it works exactly as intended. Since most value already lives as ordinary ERC-20 (the USDC and USDT in circulation), the usual way for it to *become* confidential is to wrap: you deposit an ERC-20 and OpenZeppelin's [`ERC7984ERC20Wrapper`](https://docs.openzeppelin.com/confidential-contracts/token) mints the confidential equivalent one-for-one. That wrap happens in a single transaction through `wrap(to, amount)`. It keeps the on-ramp simple and cheap, but it leaves that one transaction publicly observable: `to` and `amount` are cleartext, so the chain records who received how much at the moment of entry. Everything after the wrap is private by design; the wrap itself is the only step on view.
 
 For someone wrapping to their own address, that's a fine and widely accepted trade. But when you wrap *to* someone else (paying a counterparty, funding a desk), that first transaction ties a public deposit to the recipient of the freshly minted confidential tokens. It's a link, and it's often the one fact you wanted to keep private.
 
-Our adapters close that last gap, and without replacing anything: a stealth wrap adapter works in concert with any existing `ERC7984ERC20Wrapper`, giving the first mile the same privacy as everything after it while handing back the very same confidential token. A depositor puts in a **public** amount for an **encrypted** recipient. The funds are wrapped into confidential balance held in escrow, then delivered to the recipient in a separate, mixed step, so an observer sees public deposits go in and confidential balances come out but can't tie a given deposit to the recipient it funded. The privacy comes from mixing each deposit into a crowd, so delivery can't share a transaction with the deposit. The flow is two-phase:
+Our adapters close that last gap, and without replacing anything: a stealth wrap adapter works with an existing OpenZeppelin `ERC7984ERC20Wrapper` (see [Compatibility](#compatibility)), giving the first mile the same privacy as everything after it while handing back the very same confidential token. A depositor puts in a **public** amount for an **encrypted** recipient. The funds are wrapped into confidential balance held in escrow, then delivered to the recipient in a separate, mixed step, so an observer sees public deposits go in and confidential balances come out but can't tie a given deposit to the recipient it funded. The privacy comes from mixing each deposit into a crowd, so delivery can't share a transaction with the deposit. The flow is two-phase:
 
 - **`initWrap`** escrows a deposit and records an *encrypted* recipient.
 - **`finalizeWrap`** homomorphically hands each recipient the sum of the deposits addressed to them, mixed in with decoys so observers can't tell which deposits were real.

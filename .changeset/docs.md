@@ -7,3 +7,4 @@ Docs:
   payee and the depositor cannot decrypt it to check where the funds go
 - unwrapping the exact amount received reveals which deposits paid you
 - a cheque moves the requested amount or an encrypted zero
+- a README Compatibility section states the Zama FHEVM requirements
