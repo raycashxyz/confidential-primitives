@@ -28,6 +28,7 @@ contract MockERC7984ERC20Wrapper is ERC7984, ERC7984ERC20Wrapper, ZamaEthereumCo
 
     function _update(address from, address to, euint64 amount)
         internal
+        virtual
         override(ERC7984, ERC7984ERC20Wrapper)
         returns (euint64)
     {

@@ -1,7 +1,7 @@
 /**
  * Minimal FHEVM encrypt/decrypt helpers over a fhevm-tevm-mocks instance.
  *
- * Standalone replacement for the encrypt/decrypt utilities used by the private harness — no
+ * Standalone replacement for the encrypt/decrypt utilities used by the private harness, with no
  * relayer-SDK production path, just the test-instance calls the adapters need.
  */
 import {
@@ -12,7 +12,13 @@ import type { WalletWithAccount } from "./environment";
 
 interface EncryptedInput {
   addAddress: (value: string) => void;
+  addBool: (value: boolean) => void;
+  add8: (value: bigint | number) => void;
+  add16: (value: bigint | number) => void;
+  add32: (value: bigint | number) => void;
   add64: (value: bigint | number) => void;
+  add128: (value: bigint | number) => void;
+  add256: (value: bigint | number) => void;
   encrypt: () => Promise<{ handles: (string | Uint8Array)[]; inputProof: string | Uint8Array }>;
 }
 
@@ -27,7 +33,7 @@ interface Eip712 {
   };
 }
 
-/** The subset of the fhevm-tevm-mocks instance surface these helpers use. */
+/** The subset of the fhevm-tevm-mocks instance these helpers use. */
 export interface FhevmInstance {
   createEncryptedInput: (contract: string, user: string) => EncryptedInput;
   generateKeypair: () => { publicKey: string; privateKey: string };
@@ -46,7 +52,8 @@ export interface FhevmInstance {
 
 type EncValue =
   | { type: "addAddress"; value: string }
-  | { type: "add64"; value: bigint | number };
+  | { type: "addBool"; value: boolean }
+  | { type: "add8" | "add16" | "add32" | "add64" | "add128" | "add256"; value: bigint | number };
 
 const toHandle = (h: string | Uint8Array): Hex =>
   typeof h === "string" && isHex(h) ? padHex(h, { size: 32 }) : toHex(h, { size: 32 });
@@ -54,7 +61,7 @@ const toHandle = (h: string | Uint8Array): Hex =>
 const toProof = (p: string | Uint8Array): Hex => (typeof p === "string" && isHex(p) ? p : toHex(p));
 
 /**
- * Encrypt `values` for `contractAddress`/`userAddress`, returning `[...handles, inputProof]` —
+ * Encrypt `values` for `contractAddress`/`userAddress`, returning `[...handles, inputProof]`,
  * the shape the wrapper entry points expect.
  */
 export async function encryptValues (
@@ -66,6 +73,12 @@ export async function encryptValues (
   const input = instance.createEncryptedInput(getAddress(contractAddress), getAddress(userAddress));
   for (const v of values) {
     if (v.type === "addAddress") input.addAddress(v.value);
+    else if (v.type === "addBool") input.addBool(v.value);
+    else if (v.type === "add8") input.add8(v.value);
+    else if (v.type === "add16") input.add16(v.value);
+    else if (v.type === "add32") input.add32(v.value);
+    else if (v.type === "add128") input.add128(v.value);
+    else if (v.type === "add256") input.add256(v.value);
     else input.add64(v.value);
   }
   const enc = await input.encrypt();
@@ -95,8 +108,8 @@ export async function encryptRecipient (
 }
 
 /**
- * Decrypt an euint handle for `owner` via the full userDecrypt flow (fresh keypair authorized by
- * an EIP-712 signature). The tevm mock relayer verifies that signature strictly.
+ * Decrypt an euint handle for `owner` via the full userDecrypt flow, with a fresh keypair authorized by
+ * an EIP-712 signature. The tevm mock relayer verifies that signature strictly.
  */
 export async function decryptEuint (
   instance: FhevmInstance,
@@ -115,7 +128,7 @@ export async function decryptEuint (
     domain: eip712.domain,
     types,
     primaryType: eip712.primaryType,
-    // The mock encodes the uint256 fields as strings; viem's typed signer wants bigint.
+    // The mock encodes the uint256 fields as strings. viem's typed signer wants bigint.
     message: {
       ...eip712.message,
       startTimestamp: BigInt(eip712.message.startTimestamp),
