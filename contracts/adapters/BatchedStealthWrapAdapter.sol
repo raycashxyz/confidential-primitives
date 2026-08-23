@@ -247,6 +247,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      */
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual override nonReentrant {
         if (recipient == address(0)) revert ZeroAddress();
+        // An empty set would scan nothing and still transfer, emitting {WrapFinalized} against an
+        // address that never touched the protocol.
+        if (ids.length == 0) revert InvalidId();
 
         // Count scanned slots across batches to size the payout array.
         uint256 totalSlots;

@@ -13,6 +13,21 @@ import { assertRevertsWith } from "../setup/asserts";
 const boot = useBatchedSuite();
 
 describe("BatchedStealthWrapAdapter finalizeWrap", () => {
+
+  // An empty id set scanned nothing but still made a real confidentialTransfer of the encrypted
+  // zero, emitting WrapFinalized(recipient, handle, []) against any address that need never have
+  // touched the protocol, and repeatable at gas cost.
+  it("rejects an empty id set instead of emitting a forged claim", async () => {
+    const { wallets, deployWrapper } = await boot();
+    const { alice, bob } = wallets;
+    const { contract: wrapper } = await deployWrapper(4n);
+
+    await assertRevertsWith(
+      wrapper.write.finalizeWrap([[], bob.account.address], txOpts(alice.account)),
+      "InvalidId",
+    );
+  });
+
   it("reverts while the batch is still open", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap
