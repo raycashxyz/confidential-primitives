@@ -30,6 +30,9 @@ interface IStealthWrapAdapter {
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);
     function rate() external view returns (uint256);
+
+    /// @notice Number of deposits recorded. Slots are dense, so every `slot < getDepositsLength()`
+    ///         holds a deposit.
     function getDepositsLength() external view returns (uint256);
 
     /// @notice Deposit clear ERC20 into escrow with an encrypted recipient.

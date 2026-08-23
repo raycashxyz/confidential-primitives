@@ -61,6 +61,26 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     expect(await wrapper.read.batchClosed([0n])).toBe(true);
   });
 
+  // Slots are dense. A batch sealed short leaves no holes, so the next deposit takes the next slot
+  // and [0, getDepositsLength()) enumerates every deposit.
+  it("keeps slots dense across a sealed partial batch", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, send, warpTime
+    } = await boot();
+    const { alice } = wallets;
+    const { contract: wrapper } = await deployWrapper(4n);
+    await fundAndApprove(wrapper, alice, 2n);
+
+    await initWrap(wrapper, alice, alice.account.address); // slot 0, batch 0
+    await warpTime(SEAL_DELAY + 1n);
+    await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
+    await initWrap(wrapper, alice, alice.account.address); // slot 1, batch 1
+
+    expect(await wrapper.read.getDepositsLength()).toBe(2n);
+    expect((await wrapper.read.deposits([1n]))[0]).toBe(alice.account.address);
+    expect(await wrapper.read.batchFillCount([1n])).toBe(1n);
+  });
+
   it("reverts on an empty batch", async () => {
     const { wallets, deployWrapper } = await boot();
     const { contract: wrapper } = await deployWrapper(4n);

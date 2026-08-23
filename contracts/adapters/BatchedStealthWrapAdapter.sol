@@ -63,11 +63,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @notice Batch currently accepting deposits.
     uint256 public currentBatchId;
 
-    /// @notice Total deposits recorded across all batches.
-    uint256 public totalDeposits;
-
-    /// @notice Global slot index (batchId * maxBatchDeposits + batchIndex) => deposit.
-    mapping(uint256 slot => Deposit) public deposits;
+    Deposit[] public deposits;
 
     mapping(uint256 batchId => Batch) private _batches;
 
@@ -75,6 +71,8 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         uint256 fillCount;
         bool closed;
         uint64 openedAt;
+        /// @dev The batch occupies slots `[firstSlot, firstSlot + fillCount)`.
+        uint64 firstSlot;
         mapping(address recipient => euint64) claimed;
     }
 
@@ -121,7 +119,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     function getDepositsLength() external view override returns (uint256) {
-        return totalDeposits;
+        return deposits.length;
     }
 
     function batchFillCount(uint256 batchId) public view returns (uint256) {
@@ -199,17 +197,19 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         FHE.allowThis(verifiedRecipient);
         FHE.allowThis(eAmount);
 
-        slot = batchId * maxBatchDeposits + batchIndex;
-        deposits[slot] = Deposit({
+        slot = deposits.length;
+        deposits.push(Deposit({
             depositor: depositor,
             amount: wrappedUnderlying,
             eAmount: eAmount,
             eRecipient: verifiedRecipient
-        });
+        }));
 
         batch.fillCount = batchIndex + 1;
-        if (batchIndex == 0) batch.openedAt = uint64(block.timestamp);
-        totalDeposits += 1;
+        if (batchIndex == 0) {
+            batch.openedAt = uint64(block.timestamp);
+            batch.firstSlot = uint64(slot);
+        }
 
         // Emit before the close so log order matches the lifecycle.
         emit WrapInitiated(batchId, slot, depositor, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
@@ -282,7 +282,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *      stops a re-entrant finalize from reading the stale ledger.
      */
     function _finalizeBatch(uint256 batchId, Batch storage batch, address recipient) private {
-        uint256 startIndex = batchId * maxBatchDeposits;
+        uint256 startIndex = batch.firstSlot;
         uint256 count = batch.fillCount;
 
         // Per-slot payouts are independent. The tree keeps the reduction at ceil(log2 N) adds.
