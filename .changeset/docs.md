@@ -14,3 +14,4 @@ Docs:
 - size `maxBatchDeposits` and `minDecoys` against the target wrapper's transfer cost
 - the wrapper must be exact-or-revert on `wrap`, and on `confidentialTransfer` where the adapter's
   finalize path is not retry-safe
+- wrapper-level transfer restrictions see the adapter as the counterparty, not the depositor

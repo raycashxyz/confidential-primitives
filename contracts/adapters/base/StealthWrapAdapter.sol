@@ -73,7 +73,9 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
      *      it into confidential balance held by this adapter. Call it only from a `nonReentrant`
      *      entrypoint, since it calls out before the caller records the deposit. The wrapper must be
      *      exact-or-revert on `wrap`. A short wrap would leave the underlying with the wrapper and a
-     *      zero-valued deposit here.
+     *      zero-valued deposit here. The adapter is the wrapper's counterparty. A wrapper that gates
+     *      `wrap` on its caller or recipient sees this adapter, not the depositor, so such checks
+     *      belong on the adapter's deposit path instead.
      * @return wrappedUnderlying The underlying amount wrapped.
      * @return wrappedAmount The resulting encrypted balance, persisted to this adapter.
      */
