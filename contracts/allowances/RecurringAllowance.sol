@@ -422,10 +422,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @notice Execute an owner-signed one-shot transfer: move up to the signed encrypted
-     *         cap of `permit.token` from `owner` to `to` — the "confidential cheque".
-     *         The spender chooses the actual `requested` amount at execution;
-     *         `min`-style semantics apply obliviously (over-cap requests move zero).
+     * @notice Execute an owner-signed one-shot transfer, the confidential cheque, moving up to the
+     *         signed encrypted cap of `permit.token` from `owner` to `to`. The spender chooses the
+     *         `requested` amount at execution. The cap is enforced obliviously and all-or-nothing,
+     *         so an over-cap request moves an encrypted zero rather than the cap.
      * @dev Touches no stored permissions — this is a parallel, stateless rail (plus the
      *      nonce bit). The nonce is consumed on submission REGARDLESS of the encrypted
      *      outcome: a cheque against an insufficient balance is burned unspent (the
@@ -465,8 +465,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
     }
 
-    /// @dev `min(requested, cap)`-style oblivious amount: `requested` if within the
-    ///      signed cap, an encrypted zero otherwise.
+    /// @dev All-or-nothing oblivious amount. `requested` when it is at or below the signed cap, an
+    ///      encrypted zero otherwise, so a request of 150 against a cap of 100 moves zero. A
+    ///      successful call consumes the nonce either way, so the signer must issue a fresh cheque
+    ///      to retry.
     function _chequeAmount(
         bytes32 capHandle,
         bytes calldata capProof,
