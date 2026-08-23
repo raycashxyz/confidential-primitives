@@ -7,7 +7,7 @@ import {
   describe, it, expect
 } from "vitest";
 import {
-  decodeEventLog, encodeAbiParameters, parseAbiItem, zeroHash
+  decodeEventLog, encodeAbiParameters, getAddress, parseAbiItem, zeroAddress, zeroHash
 } from "viem";
 
 import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
@@ -20,6 +20,7 @@ import { getOrDeployBatchedStealthWrapAdapter } from "../../src/deployers/Batche
 import { getOrDeployMockBatchedStealthWrapAdapterExtension } from "../../src/deployers/MockBatchedStealthWrapAdapterExtension";
 import { getOrDeployMockTransientAmountAdapter } from "../../src/deployers/MockTransientAmountAdapter";
 import { getOrDeployMockReusableHandleAdapter } from "../../src/deployers/MockReusableHandleAdapter";
+import { getOrDeployMockWrapperShape } from "../../src/deployers/MockWrapperShape";
 
 const boot = useBatchedSuite();
 
@@ -45,6 +46,45 @@ describe("BatchedStealthWrapAdapter", () => {
     it("reverts on a zero seal delay (would collapse the anonymity set)", async () => {
       const { deployWrapper } = await boot();
       await assertRevertsWith(deployWrapper(4n, 0n), "SealDelayTooShort");
+    });
+
+    // The base constructor reads only `underlying()` and `rate()` from the wrapper. A shape mock
+    // returning arbitrary values exercises both rejections without a real wrapper.
+    it("rejects a zero wrapper, a wrapper with no underlying, and a zero rate", async () => {
+      const {
+        publicClient, wallets, store, underlying
+      } = await boot();
+      const { deployer } = wallets;
+      const deployWith = (wrapper: `0x${string}`) => getOrDeployBatchedStealthWrapAdapter({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, wrapper],
+        force: true,
+      });
+      const shape = (underlyingAddress: `0x${string}`, rate: bigint) => getOrDeployMockWrapperShape({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [underlyingAddress, rate],
+        force: true,
+      });
+
+      await assertRevertsWith(deployWith(zeroAddress), "ZeroAddress");
+      const { contract: noUnderlying } = await shape(zeroAddress, 1n);
+      await assertRevertsWith(deployWith(noUnderlying.address), "ZeroAddress");
+      const { contract: zeroRate } = await shape(underlying.address, 0n);
+      await assertRevertsWith(deployWith(zeroRate.address), "InvalidRate");
+    });
+
+    it("exposes its wrapper configuration", async () => {
+      const { deployWrapper, confidentialWrapper, underlying } = await boot();
+      const { contract: wrapper } = await deployWrapper(4n);
+      expect(getAddress(await wrapper.read.confidentialWrapper())).toBe(getAddress(confidentialWrapper.address));
+      expect(getAddress(await wrapper.read.underlying())).toBe(getAddress(underlying.address));
+      expect(await wrapper.read.rate()).toBe(await confidentialWrapper.read.rate());
+      expect(await wrapper.read.sealDelay()).toBe(SEAL_DELAY);
+      expect(await wrapper.read.maxBatchDeposits()).toBe(4n);
     });
   });
 

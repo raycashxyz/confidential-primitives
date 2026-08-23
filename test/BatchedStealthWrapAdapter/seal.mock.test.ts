@@ -81,6 +81,20 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     expect(await wrapper.read.batchFillCount([1n])).toBe(1n);
   });
 
+  it("rejects sealing a batch that is not the current one", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap
+    } = await boot();
+    const { alice } = wallets;
+    const { contract: wrapper } = await deployWrapper(2n);
+    await fundAndApprove(wrapper, alice, 2n);
+    await initWrap(wrapper, alice, alice.account.address);
+    await initWrap(wrapper, alice, alice.account.address); // fills and closes batch 0
+    expect(await wrapper.read.currentBatchId()).toBe(1n);
+
+    await assertRevertsWith(wrapper.write.sealBatch([0n], txOpts(alice.account)), "NotCurrentBatch");
+  });
+
   it("reverts on an empty batch", async () => {
     const { wallets, deployWrapper } = await boot();
     const { contract: wrapper } = await deployWrapper(4n);

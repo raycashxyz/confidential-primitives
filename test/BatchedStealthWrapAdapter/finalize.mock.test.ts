@@ -5,6 +5,7 @@
 import {
   describe, it, expect
 } from "vitest";
+import { zeroAddress } from "viem";
 
 import { useBatchedSuite, AMOUNT } from "./setup/suite";
 import { txOpts, fheTxOpts } from "../setup/tx";
@@ -41,6 +42,17 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
       wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
       "BatchNotClosed",
     );
+  });
+
+  it("rejects a zero recipient", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap
+    } = await boot();
+    const { alice } = wallets;
+    const { contract: wrapper } = await deployWrapper(1n);
+    await fundAndApprove(wrapper, alice, 1n);
+    await initWrap(wrapper, alice, alice.account.address);
+    await assertRevertsWith(wrapper.write.finalizeWrap([[0n], zeroAddress], txOpts(alice.account)), "ZeroAddress");
   });
 
   it("transfers the sum of a recipient's deposits once the batch is full", async () => {

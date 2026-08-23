@@ -388,7 +388,16 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     });
 
     // Alice burns nonce 7 (word 0, bit 7) before bob submits.
-    await S.sendOk(allowance.write.invalidateUnorderedNonces([0n, 1n << 7n], txOpts(alice.account)));
+    const receipt = await S.sendOk(allowance.write.invalidateUnorderedNonces([0n, 1n << 7n], txOpts(alice.account)));
+    const [burned] = parseEventLogs({
+      abi: allowance.abi,
+      logs: receipt.logs,
+      eventName: "UnorderedNonceInvalidation"
+    });
+    if (!burned) throw new Error("no UnorderedNonceInvalidation event");
+    expect(burned.args.owner).toBe(getAddress(alice.account.address));
+    expect(burned.args.word).toBe(0n);
+    expect(burned.args.mask).toBe(1n << 7n);
 
     await assertRevertsWith(
       allowance.write.permitSetPermission([

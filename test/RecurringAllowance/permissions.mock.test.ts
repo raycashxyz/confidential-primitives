@@ -190,7 +190,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
 
     const beforeUpdate = await S.getPermission(alice.account.address, bob.account.address, 0n);
     const { handle, inputProof } = await S.encAmount(allowance.address, alice.account.address, 800n);
-    await S.sendOk(allowance.write.updatePermission([
+    const receipt = await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
       permissionId,
@@ -200,6 +200,14 @@ describe("RecurringAllowance: permission lifecycle", () => {
       0n, // startTime unchanged
       0n // endTime unchanged
     ], fheTxOpts(alice.account)));
+    const [updatedEvent] = parseEventLogs({
+      abi: allowance.abi,
+      logs: receipt.logs,
+      eventName: "PermissionUpdated"
+    });
+    if (!updatedEvent) throw new Error("no PermissionUpdated event");
+    expect(updatedEvent.args.permissionId).toBe(permissionId);
+    expect(updatedEvent.args.duration).toBe(beforeUpdate.duration);
 
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(await S.decryptAllowanceHandle(updated.limit, alice)).toBe(800n);
@@ -370,6 +378,25 @@ describe("RecurringAllowance: permission lifecycle", () => {
     );
     const untouched = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(await S.decryptAllowanceHandle(untouched.limit, alice)).toBe(500n);
+  });
+
+  it("reverts on an out-of-range index or an unknown id in the views", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+
+    await assertRevertsWith(
+      allowance.read.getPermission([alice.account.address, token.address, bob.account.address, 1n]),
+      "PermissionIndexOutOfRange",
+    );
+    await assertRevertsWith(
+      allowance.read.getPermissionById([alice.account.address, token.address, bob.account.address, 999n]),
+      "PermissionNotFound",
+    );
   });
 
   it("invalidates a single permission and leaves the rest", async () => {

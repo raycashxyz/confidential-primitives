@@ -159,6 +159,20 @@ describe("ContinuousStealthWrapAdapter", () => {
     expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
   });
 
+  // Matched amounts are rewritten to an encrypted zero, so scanning the same ids again pays nothing.
+  it("pays nothing on a repeat finalize of spent ids", async () => {
+    const { alice } = H.wallets;
+    const { contract: wrapper } = await deployWrapper();
+    await fundAndApprove(wrapper, alice, 2n);
+    await initWrap(wrapper, alice, alice.account.address);
+    await initWrap(wrapper, alice, alice.account.address);
+
+    await sendOk(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+    await sendOk(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+  });
+
   it("enforces the configured minimum decoy set", async () => {
     const { alice } = H.wallets;
     const { contract: wrapper } = await deployWrapper();
