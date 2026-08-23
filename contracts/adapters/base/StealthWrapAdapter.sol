@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, euint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
+import {FHEUtils} from "../../fhe/FHEUtils.sol";
 
 /**
  * @title StealthWrapAdapter
@@ -61,6 +62,15 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
+    /**
+     * @dev Import a depositor-submitted encrypted recipient. Every deposit path must import through
+     *      here. The import grants this adapter transient access only. Persist it with
+     *      `FHE.allowThis` where the handle is stored.
+     */
+    function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
+        return FHEUtils.fromExternalForThis(eRecipient, inputProof, msg.sender);
+    }
+
     /// @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
     ///      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
     function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
@@ -84,27 +94,6 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
         transferred = CONFIDENTIAL_WRAPPER.confidentialTransfer(recipient, amount);
         FHE.allowThis(transferred);
-    }
-
-    /**
-     * @dev Reduce `xs` to a single encrypted sum with a pairwise binary-tree reduction.
-     *      This keeps FHE dependency depth at O(log N), unlike a serial accumulator.
-     */
-    function _sumTree(euint64[] memory xs) internal virtual returns (euint64) {
-        uint256 n = xs.length;
-        if (n == 0) return E_ZERO;
-
-        while (n > 1) {
-            uint256 half = (n + 1) >> 1;
-            for (uint256 i = 0; i < half; i++) {
-                uint256 l = i << 1;
-                uint256 r = l + 1;
-                xs[i] = r < n ? FHE.add(xs[l], xs[r]) : xs[l];
-            }
-            n = half;
-        }
-
-        return xs[0];
     }
 
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual;

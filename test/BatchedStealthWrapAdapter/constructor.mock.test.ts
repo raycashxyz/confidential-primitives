@@ -45,6 +45,55 @@ describe("BatchedStealthWrapAdapter", () => {
   });
 
   describe("initWrap", () => {
+
+    // Every legitimate deposit carries a proof. `FHEUtils.fromExternalForThis` rejects an empty one before
+    // the coprocessor is called.
+    it("rejects an empty inputProof (the handle would skip the coprocessor's type check)", async () => {
+      const {
+        wallets, fhevm, deployWrapper, fundAndApprove
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(2n);
+      await fundAndApprove(wrapper, alice, 1n);
+
+      const { handle } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        "MissingInputProof",
+      );
+    });
+
+    it("rejects an empty inputProof through a subclass's own deposit path", async () => {
+      const {
+        publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send
+      } = await boot();
+      const { deployer, alice } = wallets;
+      const { contract: wrapper } = await getOrDeployMockBatchedStealthWrapAdapterExtension({
+        walletClient: deployer,
+        publicClient,
+        store,
+        args: [2n, SEAL_DELAY, confidentialWrapper.address],
+        force: true,
+      });
+
+      await send(underlying.write.transfer([alice.account.address, AMOUNT], txOpts(deployer.account)));
+      await send(underlying.write.approve([wrapper.address, AMOUNT], txOpts(alice.account)));
+      const { handle } = await encryptRecipient(
+        fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
+      );
+
+      await assertRevertsWith(
+        wrapper.write.initWrap([AMOUNT, handle, "0x"], txOpts(alice.account)),
+        "MissingInputProof",
+      );
+      await assertRevertsWith(
+        wrapper.write.initWrapFor([alice.account.address, AMOUNT, handle, "0x"], txOpts(alice.account)),
+        "MissingInputProof",
+      );
+    });
+
     it("lets a subclass override initWrap and record through the batched deposit hook", async () => {
       const {
         publicClient, wallets, store, confidentialWrapper, underlying, fhevm, send

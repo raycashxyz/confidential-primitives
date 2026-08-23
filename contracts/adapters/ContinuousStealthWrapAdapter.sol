@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {FHE, euint64, ebool, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {StealthWrapAdapter} from "./base/StealthWrapAdapter.sol";
+import {FHEUtils} from "../fhe/FHEUtils.sol";
 
 /**
  * @title ContinuousStealthWrapAdapter
@@ -51,7 +52,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         externalEaddress encryptedRecipient,
         bytes calldata inputProof
     ) external override nonReentrant returns (uint256 depositIndex) {
-        eaddress verifiedRecipient = FHE.fromExternal(encryptedRecipient, inputProof);
+        eaddress verifiedRecipient = _verifyRecipient(encryptedRecipient, inputProof);
         (uint256 wrappedUnderlying, euint64 encryptedAmount) = _wrapIntoEscrow(msg.sender, amount);
         FHE.allowThis(verifiedRecipient);
 
@@ -90,7 +91,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
             FHE.allowThis(d.amount);
         }
 
-        euint64 total = _sumTree(payouts);
+        euint64 total = FHEUtils.sum(payouts);
         euint64 transferred = _transferWrapped(recipient, total);
 
         emit WrapFinalized(recipient, FHE.toBytes32(transferred), ids);

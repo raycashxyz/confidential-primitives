@@ -8,6 +8,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {IERC7984} from "@openzeppelin/confidential-contracts/interfaces/IERC7984.sol";
 import {IRecurringAllowance} from "../interfaces/IRecurringAllowance.sol";
+import {FHEUtils} from "../fhe/FHEUtils.sol";
 import {UnorderedNonces} from "./base/UnorderedNonces.sol";
 
 /**
@@ -146,7 +147,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bool firstPermission;
         (duration, startTime, endTime, firstPermission) =
             _validateNewPermission(msg.sender, token, spender, duration, startTime, endTime);
-        euint64 eLimit = FHE.fromExternal(limit, inputProof);
+        euint64 eLimit = FHEUtils.fromExternalForThis(limit, inputProof, msg.sender);
         permissionId = _finalizeCreate(msg.sender, token, spender, eLimit, duration, startTime, endTime, firstPermission);
     }
 
@@ -184,7 +185,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint64 endTime;
         (duration, startTime, endTime, firstPermission) =
             _validateNewPermission(owner, grant.token, grant.spender, grant.duration, grant.startTime, grant.endTime);
-        euint64 eLimit = FHE.fromExternal(externalEuint64.wrap(grant.limitHandle), inputProof);
+        euint64 eLimit = FHEUtils.fromExternalForThis(externalEuint64.wrap(grant.limitHandle), inputProof, msg.sender);
         permissionId = _finalizeCreate(owner, grant.token, grant.spender, eLimit, duration, startTime, endTime, firstPermission);
     }
 
@@ -288,7 +289,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (permission.id != permissionId) revert PermissionMismatch(permissionId);
 
         if (inputProof.length > 0) {
-            euint64 eLimit = FHE.fromExternal(limit, inputProof);
+            euint64 eLimit = FHEUtils.fromExternalForThis(limit, inputProof, msg.sender);
             permission.limit = eLimit;
             FHE.allowThis(eLimit);
             FHE.allow(eLimit, msg.sender);
@@ -410,7 +411,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         bytes calldata inputProof,
         address token
     ) external nonReentrant returns (euint64 transferred) {
-        transferred = _spend(from, to, FHE.fromExternal(amount, inputProof), token);
+        transferred = _spend(from, to, FHEUtils.fromExternalForThis(amount, inputProof, msg.sender), token);
     }
 
     /**
@@ -421,7 +422,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     function transferFrom(TransferDetails[] calldata transfers) external nonReentrant {
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            _spend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
+            _spend(t.from, t.to, FHEUtils.fromExternalForThis(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -443,7 +444,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         executed = new bool[](transfers.length);
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferDetails calldata t = transfers[i];
-            executed[i] = _trySpend(t.from, t.to, FHE.fromExternal(t.amount, t.inputProof), t.token);
+            executed[i] = _trySpend(t.from, t.to, FHEUtils.fromExternalForThis(t.amount, t.inputProof, msg.sender), t.token);
         }
     }
 
@@ -498,8 +499,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         externalEuint64 requested,
         bytes calldata requestedProof
     ) private returns (euint64) {
-        euint64 eCap = FHE.fromExternal(externalEuint64.wrap(capHandle), capProof);
-        euint64 eRequested = FHE.fromExternal(requested, requestedProof);
+        euint64 eCap = FHEUtils.fromExternalForThis(externalEuint64.wrap(capHandle), capProof, msg.sender);
+        euint64 eRequested = FHEUtils.fromExternalForThis(requested, requestedProof, msg.sender);
         return FHE.select(FHE.le(eRequested, eCap), eRequested, E_ZERO);
     }
 

@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {
+    FHE,
+    ebool,
+    euint8,
+    euint16,
+    euint32,
+    euint64,
+    euint128,
+    euint256,
+    eaddress,
+    externalEbool,
+    externalEuint8,
+    externalEuint16,
+    externalEuint32,
+    externalEuint64,
+    externalEuint128,
+    externalEuint256,
+    externalEaddress
+} from "@fhevm/solidity/lib/FHE.sol";
+import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
+import {FHEUtils} from "../fhe/FHEUtils.sol";
+
+/**
+ * @dev Exercises {FHEUtils} directly, so the library's guarantees are pinned independently of the
+ *      contracts that happen to use it. The ACL containment in particular rests on the BEHAVIOUR of
+ *      `FHEVMExecutor.verifyInput` rather than on its signature, so a dependency bump could break it
+ *      with no compiler error. These are the tests that would catch that.
+ */
+contract MockFHEUtilsHarness is ZamaEthereumConfig {
+    /// @param importer Whether THIS contract can use the imported handle (must be true).
+    /// @param submitter Whether the account that submitted it can (must be false).
+    event ImportAccess(bool importer, bool submitter);
+
+    /// @dev Last handle produced by {sumOf}, so a test can read it back.
+    euint64 public lastResult;
+
+    /// @dev Import an amount and report who ended up with ACL access.
+    function importAndReportAccess(externalEuint64 handle, bytes calldata inputProof) external {
+        euint64 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    /// @dev Import a recipient and report the same. Separate overload, same guarantee.
+    function importAddressAndReportAccess(externalEaddress handle, bytes calldata inputProof) external {
+        eaddress imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    /// @dev The remaining overloads, one per supported type, reporting access the same way.
+    function importBoolAndReportAccess(externalEbool handle, bytes calldata inputProof) external {
+        ebool imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    function importUint8AndReportAccess(externalEuint8 handle, bytes calldata inputProof) external {
+        euint8 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    function importUint16AndReportAccess(externalEuint16 handle, bytes calldata inputProof) external {
+        euint16 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    function importUint32AndReportAccess(externalEuint32 handle, bytes calldata inputProof) external {
+        euint32 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    function importUint128AndReportAccess(externalEuint128 handle, bytes calldata inputProof) external {
+        euint128 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    function importUint256AndReportAccess(externalEuint256 handle, bytes calldata inputProof) external {
+        euint256 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        emit ImportAccess(FHE.isAllowed(imported, address(this)), FHE.isAllowed(imported, msg.sender));
+    }
+
+    /// @dev Import an `eaddress` handle THROUGH THE euint64 OVERLOAD. The coprocessor must reject the
+    ///      type mismatch, which is what makes a wrong-typed handle unable to reach a typed slot.
+    function importAddressAsAmount(externalEuint64 mistyped, bytes calldata inputProof) external {
+        FHEUtils.fromExternalForThis(mistyped, inputProof, msg.sender);
+    }
+
+    /// @dev Tree-sum `values` and keep the total, so the reduction is exercised end to end.
+    function sumOf(uint64[] calldata values) external {
+        euint64[] memory xs = new euint64[](values.length);
+        for (uint256 i = 0; i < values.length; i++) xs[i] = FHE.asEuint64(values[i]);
+        euint64 total = FHEUtils.sum(xs);
+        FHE.allowThis(total);
+        FHE.allow(total, msg.sender);
+        lastResult = total;
+    }
+}

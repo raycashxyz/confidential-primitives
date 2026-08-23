@@ -45,6 +45,28 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(byId.limit).toBe(permission.limit);
   });
 
+  // An empty proof makes FHE.fromExternal return the handle verbatim, so a non-Uint64 handle would
+  // become Permission.limit and every later FHE.le against it reverts, inside _evaluatePermissions,
+  // which runs before tryTransferFrom's try/catch, so one such row kills a whole batch.
+  it("rejects an empty inputProof on creation (updatePermission's sentinel does not apply here)", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+
+    const { handle } = await S.encAmount(allowance.address, alice.account.address, 1000n);
+    await assertRevertsWith(
+      allowance.write.setPermission([
+        token.address,
+        bob.account.address,
+        handle,
+        "0x",
+        DAY,
+        0n,
+        0n
+      ], txOpts(alice.account)),
+      "MissingInputProof",
+    );
+  });
+
   it("both the user and the spender can decrypt limit and spent", async () => {
     const { H } = S.ctx();
     const { alice, bob } = H.wallets;

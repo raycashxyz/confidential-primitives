@@ -86,6 +86,8 @@ Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this s
 | Which deposits matched | Hidden (oblivious `FHE.select`) |
 | Amount delivered | Encrypted `euint64`; can be zero |
 
+**The recipient is hidden from the chain and from the depositor.** The handshake has the recipient encrypt their own address with the input proof bound to the *depositor*, which is what stops anyone else submitting it. The obvious way to import that ciphertext, `FHE.fromExternal`, would also hand the depositor transient ACL access to it. That is harmless for an EOA, since transient authorization dies with the transaction, but not for a *contract* depositor, which could make that access permanent or mark the value publicly decryptable in the same call and read the address off. So the adapters import through `FHEUtils.fromExternalForThis` (see [FHEUtils](#fheutils)), which calls the coprocessor's `verifyInput` with the same proof check and the same depositor binding but grants ACL access only to the adapter. The proof still names the depositor, so no one else can submit it, while the depositor itself gets nothing to escalate. The recipient is concealed from a contract payer as well as from observers. This hides the recipient from the payer. It does *not* let the payer verify it, because the party doing the encrypting is the party being trusted, so treat a payment request as an authenticated message from the payee and confirm it out of band.
+
 ## RecurringAllowance
 
 The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits — without publishing the limits.
@@ -153,6 +155,32 @@ A denied spend costs exactly the same as a permitted one — same op sequence, s
 | Spend amounts | Encrypted `euint64` |
 | Whether a spend was permitted or denied | Hidden on-chain: identical writes and events either way; the recipient learns the outcome from their balance |
 
+## FHEUtils
+
+`contracts/fhe/FHEUtils.sol` extends `@fhevm/solidity`. Import both.
+It holds the pieces every contract that handles ciphertexts it did not create ends up needing, and
+that are easy to get silently wrong.
+
+**`fromExternalForThis(handle, inputProof, user)`** imports a caller-supplied ciphertext and grants ACL
+access to *your contract only*, with an overload for every type `FHE.fromExternal` supports. `FHE.fromExternal` also grants the **submitter** transient access. An
+EOA can't use that, but a contract caller, still running in the same transaction, promotes it with
+`FHE.allow` or publishes it with `FHE.makePubliclyDecryptable`, then decrypts a plaintext it was never
+meant to see. The expected type travels to the coprocessor, which reverts `InvalidType` on a
+mismatch, and an empty proof reverts `MissingInputProof`, so the `FHE.fromExternal` branch that
+returns a handle verbatim after only an ACL check is unreachable. The proof binding is unchanged.
+`user` is still verified, so the ciphertext stays submittable only by the party it was issued to.
+Pass `msg.sender` unless you know why you shouldn't.
+
+**`sum(xs)`** tree-reduces an array to one ciphertext. fhEVM meters *two* budgets per transaction:
+total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N
+adds, so it hits the depth cap long before the total one and caps N hard. Pairwise reduction keeps the
+critical path at `ceil(log2 N)`.
+
+> **Version coupling.** `fromExternalForThis` depends on the *behaviour* of `FHEVMExecutor.verifyInput`,
+> namely that it grants ACL access to its own `msg.sender` and no one else, rather than only its signature. A
+> release changing that would break the guarantee with no compiler error, so `test/fhe-utils.mock.test.ts`
+> asserts it directly. Keep those green across dependency bumps rather than trusting a version pin.
+
 ## Install
 
 ```bash
@@ -167,6 +195,7 @@ import {BatchedStealthWrapAdapter} from "@raycashxyz/confidential-primitives/con
 import {IStealthWrapAdapter} from "@raycashxyz/confidential-primitives/contracts/interfaces/IStealthWrapAdapter.sol";
 import {RecurringAllowance} from "@raycashxyz/confidential-primitives/contracts/allowances/RecurringAllowance.sol";
 import {IRecurringAllowance} from "@raycashxyz/confidential-primitives/contracts/interfaces/IRecurringAllowance.sol";
+import {FHEUtils} from "@raycashxyz/confidential-primitives/contracts/fhe/FHEUtils.sol";
 ```
 
 ## Develop
