@@ -223,6 +223,37 @@ describe("FHEUtils", () => {
     });
   });
 
+  describe("isFreshForThis", () => {
+    // The used-handle record is the ACL. An import grants only transient access, so a handle stays
+    // fresh until the contract persists access with `allowThis`, and a repeat import of the same
+    // handle, which the coprocessor accepts since `verifyInput` is stateless, finds it used.
+    it("is fresh after import, used once access is persisted, and used on a repeat import", async () => {
+      const {
+        contract, send, alice, fhevm
+      } = await boot();
+      const [handle, inputProof] = await encryptValues(
+        fhevm.instance, [{
+          type: "add64",
+          value: 5n
+        }], contract.address, alice.account.address,
+      );
+      const freshness = (receipt: Awaited<ReturnType<typeof send>>) => {
+        const [reported] = parseEventLogs({
+          abi: contract.abi,
+          logs: receipt.logs,
+          eventName: "Freshness"
+        });
+        if (!reported) throw new Error("no Freshness event");
+        return [reported.args.beforeKeep, reported.args.afterKeep];
+      };
+
+      expect(await contract.read.isFreshForThis([handle])).toBe(true);
+      expect(freshness(await send(contract.write.importAndKeep([handle, inputProof], fheTxOpts(alice.account))))).toEqual([true, false]);
+      expect(await contract.read.isFreshForThis([handle])).toBe(false);
+      expect(freshness(await send(contract.write.importAndKeep([handle, inputProof], fheTxOpts(alice.account))))).toEqual([false, false]);
+    });
+  });
+
   describe("sum", () => {
     it("tree-reduces an odd-length input to the correct total", async () => {
       const {

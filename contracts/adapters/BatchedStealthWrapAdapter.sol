@@ -162,6 +162,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         bytes calldata inputProof
     ) external virtual override nonReentrant returns (uint256 slot) {
         eaddress verifiedRecipient = _verifyRecipient(eRecipient, inputProof);
+        if (!FHEUtils.isFreshForThis(FHE.toBytes32(verifiedRecipient))) revert RecipientHandleAlreadyUsed();
         (uint256 wrappedUnderlying, euint64 eAmount) = _wrapIntoEscrow(msg.sender, amount);
         slot = _recordBatchedDeposit(msg.sender, wrappedUnderlying, eAmount, verifiedRecipient);
     }

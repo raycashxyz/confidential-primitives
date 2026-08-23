@@ -34,6 +34,10 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
     /// @param submitter Whether the account that submitted it can (must be false).
     event ImportAccess(bool importer, bool submitter);
 
+    /// @param beforeKeep Whether the handle was fresh right after import, before `allowThis`.
+    /// @param afterKeep Whether it was still fresh once access was persisted.
+    event Freshness(bool beforeKeep, bool afterKeep);
+
     /// @dev Last handle produced by {produce} / {sumOf}, so a test can read it back.
     euint64 public lastResult;
 
@@ -84,6 +88,20 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
     ///      type mismatch, which is what makes a wrong-typed handle unable to reach a typed slot.
     function importAddressAsAmount(externalEuint64 mistyped, bytes calldata inputProof) external {
         FHEUtils.fromExternalForThis(mistyped, inputProof, msg.sender);
+    }
+
+    /// @dev Import a handle and keep it, reporting freshness before and after the persistent grant.
+    function importAndKeep(externalEuint64 handle, bytes calldata inputProof) external {
+        euint64 imported = FHEUtils.fromExternalForThis(handle, inputProof, msg.sender);
+        bytes32 raw = FHE.toBytes32(imported);
+        bool beforeKeep = FHEUtils.isFreshForThis(raw);
+        FHE.allowThis(imported);
+        emit Freshness(beforeKeep, FHEUtils.isFreshForThis(raw));
+    }
+
+    /// @dev Whether this contract has never persisted access to `handle`.
+    function isFreshForThis(bytes32 handle) external view returns (bool) {
+        return FHEUtils.isFreshForThis(handle);
     }
 
     /// @dev `true` only for a handle this contract holds access to. The {FHEUtils-isAuthorizedOn}

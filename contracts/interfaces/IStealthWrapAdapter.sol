@@ -22,6 +22,10 @@ interface IStealthWrapAdapter {
     error TooFewDecoys();
     error InvalidId();
     error DuplicateId();
+    /// @dev This encrypted-recipient handle has already funded a deposit. Handles are single-use in
+    ///      the bundled adapters because a reused one publicly links its deposits. Ask the recipient
+    ///      for a fresh encryption.
+    error RecipientHandleAlreadyUsed();
 
     function confidentialWrapper() external view returns (address);
     function underlying() external view returns (address);

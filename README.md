@@ -88,6 +88,8 @@ Finalizing for a recipient `R` reveals only that "`R` ran a finalize over this s
 
 **The recipient is hidden from the chain and from the depositor.** The handshake has the recipient encrypt their own address with the input proof bound to the *depositor*, which is what stops anyone else submitting it. The obvious way to import that ciphertext, `FHE.fromExternal`, would also hand the depositor transient ACL access to it. That is harmless for an EOA, since transient authorization dies with the transaction, but not for a *contract* depositor, which could make that access permanent or mark the value publicly decryptable in the same call and read the address off. So the adapters import through `FHEUtils.fromExternalForThis` (see [FHEUtils](#fheutils)), which calls the coprocessor's `verifyInput` with the same proof check and the same depositor binding but grants ACL access only to the adapter. The proof still names the depositor, so no one else can submit it, while the depositor itself gets nothing to escalate. The recipient is concealed from a contract payer as well as from observers. This hides the recipient from the payer. It does *not* let the payer verify it, because the party doing the encrypting is the party being trusted, so treat a payment request as an authenticated message from the payee and confirm it out of band.
 
+**Recipient handles are single-use per adapter.** The handle is public in `WrapInitiated` so the recipient can spot their payment, which makes a reused one a tag linking deposits to the same unknown recipient. Both adapters reject a replay with `RecipientHandleAlreadyUsed`, and a fresh encryption of the same address is a new handle, so a recipient can be paid any number of times. `recipientHandleUsed(handle)` reports the state, read from the adapter's own ACL grant rather than a mirror mapping.
+
 ## RecurringAllowance
 
 The wrap adapters cover money coming *into* the confidential world. `RecurringAllowance` covers a step that comes after: letting someone spend your confidential balance on your behalf, within limits — without publishing the limits.
@@ -177,6 +179,12 @@ handle belonging to someone else, such as one it read from a public getter. Fold
 state and grant the result onward, and you have laundered a third party's ciphertext into something
 your caller can decrypt. A contract cannot grant itself access to a handle it does not hold, so
 anything that passes is something the callee could already read.
+
+**`isFreshForThis(handle)`** answers whether your contract has never persisted access to a handle. A
+contract keeps an input handle by calling `FHE.allowThis` on it, so the ACL's own record already says
+which handles it accepted before, and single-use needs no mirror mapping. Check before `allowThis`.
+Transient grants, including the one `fromExternalForThis` makes, do not count, and since `ACL.allow` requires
+the caller to hold access, only the importing contract can ever mark its own input handle used.
 
 **`sum(xs)`** tree-reduces an array to one ciphertext. fhEVM meters *two* budgets per transaction:
 total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N

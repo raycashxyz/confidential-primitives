@@ -148,6 +148,23 @@ library FHEUtils {
     }
 
     // -----------------------------------------------------------------------
+    // Single-use handles
+    // -----------------------------------------------------------------------
+
+    /**
+     * @dev Whether the calling contract has never persisted access to `handle`. A contract keeps an
+     *      input handle by calling `FHE.allowThis` on it, so a handle it already holds persistent
+     *      access to is one it already accepted, and the ACL's own record serves as the used-handle
+     *      set. Check before `FHE.allowThis`. Transient grants, including the one
+     *      {fromExternalForThis} makes, do not count, and since `ACL.allow` requires the caller to
+     *      hold access to the handle, the only account that can ever mark an input handle used for a
+     *      contract is that contract, which is the only one its proof lets import it.
+     */
+    function isFreshForThis(bytes32 handle) internal view returns (bool) {
+        return !IACL(Impl.getCoprocessorConfig().ACLAddress).persistAllowed(handle, address(this));
+    }
+
+    // -----------------------------------------------------------------------
     // Reductions
     // -----------------------------------------------------------------------
 

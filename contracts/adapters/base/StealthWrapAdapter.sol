@@ -62,10 +62,16 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
+    /// @notice Whether an encrypted-recipient handle has already funded a deposit here.
+    function recipientHandleUsed(bytes32 handle) external view returns (bool) {
+        return !FHEUtils.isFreshForThis(handle);
+    }
+
     /**
      * @dev Import a depositor-submitted encrypted recipient. Every deposit path must import through
      *      here. The import grants this adapter transient access only. Persist it with
-     *      `FHE.allowThis` where the handle is stored.
+     *      `FHE.allowThis` where the handle is stored, which is also what marks it used for
+     *      {recipientHandleUsed}.
      */
     function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
         return FHEUtils.fromExternalForThis(eRecipient, inputProof, msg.sender);
