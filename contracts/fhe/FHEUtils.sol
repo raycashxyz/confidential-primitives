@@ -20,14 +20,14 @@ import {
     externalEuint256,
     externalEaddress
 } from "@fhevm/solidity/lib/FHE.sol";
-import {Impl, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
+import {Impl, IACL, IFHEVMExecutor} from "@fhevm/solidity/lib/Impl.sol";
 import {FheType} from "@fhevm/solidity/lib/FheType.sol";
 
 /**
  * @title FHEUtils
  * @author Valerio Leo (@valeriohq)
- * @notice Companion to `@fhevm/solidity`: safer ciphertext imports and helpers fhEVM contracts keep
- *         needing.
+ * @notice Companion to `@fhevm/solidity`: safer ciphertext imports, ACL-backed checks, and helpers
+ *         fhEVM contracts keep needing.
  * @dev {fromExternalForThis} relies on `FHEVMExecutor.verifyInput` granting ACL access to its
  *      `msg.sender` and to nobody else. That holds for fhevm-solidity 0.11.x and is asserted by this
  *      library's tests, which must stay green across dependency bumps.
@@ -124,6 +124,27 @@ library FHEUtils {
         address user
     ) internal returns (eaddress) {
         return eaddress.wrap(_verifyInput(externalEaddress.unwrap(handle), inputProof, user, FheType.Uint160));
+    }
+
+    // -----------------------------------------------------------------------
+    // Returned handles
+    // -----------------------------------------------------------------------
+
+    /**
+     * @dev Whether `account` holds ACL access to a non-zero `handle`. Run it on every ciphertext an
+     *      untrusted contract returns, before folding that ciphertext into your own state or
+     *      granting it onward. Takes the raw handle, `FHE.toBytes32(value)`, so one function covers
+     *      every encrypted type.
+     *
+     *      Handles are global, so a hostile callee can return one it read from another contract's
+     *      getter or event. A contract cannot grant itself access it does not hold, so a `true`
+     *      result means the callee returned a value it could already read, and a `false` result is
+     *      evidence of misbehaviour rather than of a failed call. Trivially encrypted handles are
+     *      content-addressed, so two contracts that trivially encrypt the same plaintext share one
+     *      handle and both pass, which leaks nothing.
+     */
+    function isAuthorizedOn(bytes32 handle, address account) internal view returns (bool) {
+        return handle != bytes32(0) && IACL(Impl.getCoprocessorConfig().ACLAddress).isAllowed(handle, account);
     }
 
     // -----------------------------------------------------------------------

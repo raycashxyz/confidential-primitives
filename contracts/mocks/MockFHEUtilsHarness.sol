@@ -34,7 +34,7 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
     /// @param submitter Whether the account that submitted it can (must be false).
     event ImportAccess(bool importer, bool submitter);
 
-    /// @dev Last handle produced by {sumOf}, so a test can read it back.
+    /// @dev Last handle produced by {produce} / {sumOf}, so a test can read it back.
     euint64 public lastResult;
 
     /// @dev Import an amount and report who ended up with ACL access.
@@ -84,6 +84,19 @@ contract MockFHEUtilsHarness is ZamaEthereumConfig {
     ///      type mismatch, which is what makes a wrong-typed handle unable to reach a typed slot.
     function importAddressAsAmount(externalEuint64 mistyped, bytes calldata inputProof) external {
         FHEUtils.fromExternalForThis(mistyped, inputProof, msg.sender);
+    }
+
+    /// @dev `true` only for a handle this contract holds access to. The {FHEUtils-isAuthorizedOn}
+    ///      property, checked against a handle it computed itself and one another contract holds.
+    function authorizedHere(bytes32 handle) external view returns (bool) {
+        return FHEUtils.isAuthorizedOn(handle, address(this));
+    }
+
+    /// @dev Produce a handle this contract is authorized on, for the positive case above.
+    function produce(uint64 value) external {
+        euint64 produced = FHE.asEuint64(value);
+        FHE.allowThis(produced);
+        lastResult = produced;
     }
 
     /// @dev Tree-sum `values` and keep the total, so the reduction is exercised end to end.

@@ -3,10 +3,142 @@ import { getAddress, parseEventLogs } from "viem";
 
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts, txOpts } from "../setup/tx";
-import { DAY, WEEK, useAllowanceSuite } from "./setup/suite";
+import {
+  DAY, WEEK, useAllowanceSuite
+} from "./setup/suite";
+import { getOrDeployMockHandleStealingToken } from "../../src/deployers/MockHandleStealingToken";
 
 describe("RecurringAllowance: spending", () => {
   const S = useAllowanceSuite();
+
+  /**
+   * Stand up a hostile token with a working permission behind it. The attacker holds a balance,
+   * has made the allowance an operator, and has granted themselves a permission on it. The token
+   * still behaves honestly until `setStolenHandle` arms it.
+   */
+  const armHostileToken = async () => {
+    const { H, allowance } = S.ctx();
+    const { deployer, bob } = H.wallets;
+
+    const { contract: evil } = await getOrDeployMockHandleStealingToken({
+      walletClient: deployer,
+      publicClient: H.publicClient,
+      store: H.store,
+      args: [],
+      force: true,
+    });
+
+    const { handle, inputProof } = await S.encAmount(evil.address, bob.account.address, 10_000n);
+    await S.sendOk(evil.write.mint([bob.account.address, handle, inputProof], fheTxOpts(bob.account)));
+    const until = Number(await S.now()) + 3_153_600_000;
+    await S.sendOk(evil.write.setOperator([allowance.address, until], txOpts(bob.account)));
+    await S.setPermission({
+      user: bob,
+      spender: bob.account.address,
+      limit: 5_000n,
+      tokenAddr: evil.address
+    });
+
+    return evil;
+  };
+
+  // Handles are global, not namespaced per token, and `token` is caller-supplied. This contract is
+  // permanently ACL-allowed on every user's limit/spent, since it calls allowThis on them, and those
+  // handles are public, so a token that returns someone else's handle would have it added into the
+  // attacker's own `spent` and then granted to the attacker to decrypt.
+  it("rejects a token-returned handle the token itself is not authorized on", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    // The victim: an ordinary permission whose encrypted limit is public via getPermission.
+    await S.setPermission({
+      user: alice,
+      spender: carol.account.address,
+      limit: 1234n
+    });
+    const victim = await S.getPermission(alice.account.address, carol.account.address, 0n);
+
+    const evil = await armHostileToken();
+
+    // Same setup, still honest. It proves the revert below is the substitution and not a broken fixture.
+    await S.spend({
+      spender: bob,
+      from: bob.account.address,
+      to: carol.account.address,
+      amount: 100n,
+      tokenAddr: evil.address
+    });
+
+    await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
+
+    const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.transferFrom([
+        bob.account.address,
+        carol.account.address,
+        handle,
+        inputProof,
+        evil.address
+      ], txOpts(bob.account)),
+      "InvalidReturnedHandle",
+    );
+
+    // The victim's limit stayed hers. Bob never got a handle he could decrypt.
+    await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
+  });
+
+  // Unlike every other lenient-path failure, an unauthorized return handle is escalated. It is
+  // positive evidence the token is hostile, so the whole batch reverts rather than settling the
+  // honest items alongside it. The honest item here proves the batch is taken down.
+  it("reverts the whole tryTransferFrom batch on a stolen return handle", async () => {
+    const { H, allowance, token } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+
+    await S.setPermission({
+      user: alice,
+      spender: carol.account.address,
+      limit: 1234n
+    });
+    const victim = await S.getPermission(alice.account.address, carol.account.address, 0n);
+
+    // An honest item that would otherwise settle, batched alongside the poisoned one.
+    await S.fundUser(alice, 10_000n);
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+
+    const evil = await armHostileToken();
+    await S.sendOk(evil.write.setStolenHandle([victim.limit], txOpts(bob.account)));
+
+    const honest = await S.encAmount(allowance.address, bob.account.address, 100n);
+    const poisoned = await S.encAmount(allowance.address, bob.account.address, 100n);
+    await assertRevertsWith(
+      allowance.write.tryTransferFrom([[
+        {
+          from: alice.account.address,
+          to: carol.account.address,
+          amount: honest.handle,
+          inputProof: honest.inputProof,
+          token: token.address
+        },
+        {
+          from: bob.account.address,
+          to: carol.account.address,
+          amount: poisoned.handle,
+          inputProof: poisoned.inputProof,
+          token: evil.address
+        }
+      ]], txOpts(bob.account)),
+      "InvalidReturnedHandle",
+    );
+
+    // The honest item was unwound with the rest of the batch, and the victim's limit stayed hers.
+    expect(await S.balanceOf(carol)).toBe(0n);
+    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(0n);
+    await expect(S.decryptAllowanceHandle(victim.limit, bob)).rejects.toThrow();
+  });
 
   it("moves funds when permitted and records spent for both parties", async () => {
     const { H, token, allowance } = S.ctx();
@@ -113,7 +245,7 @@ describe("RecurringAllowance: spending", () => {
     expect(await S.balanceOf(carol)).toBe(0n);
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(0n); // nothing consumed
 
-    // After topping up, the same pull succeeds — the failed attempt did not burn budget.
+    // After topping up, the same pull succeeds. The failed attempt did not burn budget.
     await S.mintTo(alice, 200n);
     await S.spend({
       spender: bob,
@@ -150,7 +282,7 @@ describe("RecurringAllowance: spending", () => {
     });
     await assertRevertsWith(attempt(), "NoPermissions");
 
-    // expired (warp past endTime; the future one from above still hasn't started)
+    // expired, by warping past endTime, while the future one from above still hasn't started
     await S.setPermission({
       user: alice,
       spender: bob.account.address,

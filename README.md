@@ -95,7 +95,7 @@ The wrap adapters cover money coming *into* the confidential world. `RecurringAl
 ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing: an operator can move **any** amount of your balance while approved. There is no `approve(spender, 100)` in confidential-token land — a cleartext allowance sitting next to an encrypted balance would leak the very numbers the balance math hides. `RecurringAllowance` fills that gap: you make the contract your operator once, then grant per-spender budgets here — "100 USDC per day", with the 100 encrypted. A spender can only move your funds through `transferFrom`, which enforces every budget homomorphically. Think Permit2's allowance module or a card's spending limit, for confidential tokens.
 
 - **`setPermission`** grants a spender an encrypted per-period limit on a token, with an optional start time and expiry — or **`permitSetPermission`** does the same from an off-chain signature, so granting costs the user zero gas (see [Signature permits](#signature-permits-gasless-grants-and-confidential-cheques)).
-- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero — a denied spend is indistinguishable on-chain from a permitted one. **`tryTransferFrom`** is the payment-processor variant: items that fail a *cleartext* precondition (revoked grant, expired operator) are skipped with a `TransferSkipped` event instead of reverting the batch.
+- **`transferFrom`** (called by the spender) checks all of the user's active permissions under encryption and transfers either the requested amount or an encrypted zero. A denied spend is indistinguishable on-chain from a permitted one. **`tryTransferFrom`** is the payment-processor variant: items that fail a *cleartext* precondition, such as a revoked grant or expired operator, are skipped with a `TransferSkipped` event instead of reverting the batch. One failure is escalated rather than skipped: a token that returns a ciphertext handle it is not itself authorized on reverts the whole call with `InvalidReturnedHandle`, because no conforming ERC-7984 can produce one and it is evidence the token is hostile. Screen tokens before batching them.
 - **`updatePermission`**, **`invalidatePermission`** and **`lockdown`** manage the lifecycle: change a budget, revoke a single grant, or wipe every grant for a set of (token, spender) pairs in one call. **`getGrantedPairs`** enumerates every (token, spender) a user has granted, on-chain — a wallet can render (and revoke) the "who can spend my money" screen without an indexer.
 
 ### How it works
@@ -110,7 +110,7 @@ ERC-7984 has exactly one delegation tool, `setOperator`, and it's all-or-nothing
 - **Budgets stack conjunctively.** Every active permission for a (user, token, spender) key must pass (AND logic), so "100/day AND 500/week" is just two `setPermission` calls. The corollary: adding a permission only ever *tightens* the allowance — to raise a limit, update the existing permission instead of adding one.
 - **Periods are fixed windows**, anchored at `startTime` (period `n` is `[startTime + n*duration, startTime + (n+1)*duration)`), not a sliding window. `spent` resets lazily at the first spend attempt in a new period. A spender straddling a boundary can move up to 2x the limit inside one `duration`-long span — inherent to fixed windows; size limits with that in mind.
 - **Allowance tracks value moved, not attempts.** `spent` is credited with the amount the token reports as actually transferred, so a pull against an insufficient balance consumes nothing and can be retried after a top-up.
-- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The only cleartext reverts are structural: no active permission window (`NoPermissions`) — which is public information anyway.
+- **Denied spends don't revert.** They transfer an encrypted zero with storage writes and events identical to a permitted spend. The cleartext reverts are no active permission window (`NoPermissions`), which is public information anyway, and a token returning a ciphertext handle it is not authorized on (`InvalidReturnedHandle`).
 - **The limits bind only this contract.** Any *other* operator the user approves on the token bypasses them entirely. `RecurringAllowance` is scoped delegation, not a token-level firewall — and `lockdown` cannot revoke the operator status itself (do that on the token for belt and braces).
 
 ### Signature permits (gasless grants and confidential cheques)
@@ -170,6 +170,13 @@ mismatch, and an empty proof reverts `MissingInputProof`, so the `FHE.fromExtern
 returns a handle verbatim after only an ACL check is unreachable. The proof binding is unchanged.
 `user` is still verified, so the ciphertext stays submittable only by the party it was issued to.
 Pass `msg.sender` unless you know why you shouldn't.
+
+**`isAuthorizedOn(bytes32 handle, account)`** is the check to run on any ciphertext an untrusted contract
+hands *back* to you. Handles are global rather than namespaced, so a hostile callee can return a
+handle belonging to someone else, such as one it read from a public getter. Fold that into your own
+state and grant the result onward, and you have laundered a third party's ciphertext into something
+your caller can decrypt. A contract cannot grant itself access to a handle it does not hold, so
+anything that passes is something the callee could already read.
 
 **`sum(xs)`** tree-reduces an array to one ciphertext. fhEVM meters *two* budgets per transaction:
 total HCU and the **depth** of the longest dependency chain. A serial accumulator is a chain of N

@@ -486,6 +486,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
         FHE.allowTransient(eAmount, permit.token);
         transferred = IERC7984(permit.token).confidentialTransferFrom(owner, to, eAmount);
+        if (!FHEUtils.isAuthorizedOn(FHE.toBytes32(transferred), permit.token)) revert InvalidReturnedHandle();
         FHE.allowTransient(transferred, msg.sender);
 
         emit PermitSpent(owner, to, permit.token, msg.sender, permit.nonce, transferred);
@@ -572,6 +573,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         // The token computes over the handle during this call only.
         FHE.allowTransient(eTransferAmount, token);
         transferred = IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount);
+        // Reject a handle the token is not authorized on before it reaches `_recordSpend`. `token`
+        // is caller-supplied, and this contract is authorized on every user's `limit` and `spent`,
+        // all public through {getPermission} and {PermissionSet}. A token that returned a victim's
+        // `limit` would have `_recordSpend` compute `FHE.add(ownSpent, victimLimit)`, which passes
+        // because this contract is allowed on both, and grant the sum to the attacker, who knows
+        // their own `spent`. {permitTransferFrom} forwards the handle straight to `msg.sender`.
+        if (!FHEUtils.isAuthorizedOn(FHE.toBytes32(transferred), token)) revert InvalidReturnedHandle();
 
         _recordSpend(from, token, msg.sender, transferred);
 
@@ -598,6 +606,13 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         euint64 eTransferAmount = FHE.select(permitted, amount, E_ZERO);
         FHE.allowTransient(eTransferAmount, token);
         try IERC7984(token).confidentialTransferFrom(from, to, eTransferAmount) returns (euint64 transferred) {
+            // This one reverts the whole batch. Every other failure here is a cleartext
+            // precondition the caller can fix. A handle the token is not authorized on is evidence
+            // the counterparty is hostile, since no conforming ERC-7984 can produce one, and `token`
+            // is caller-supplied per item, so skipping would settle unrelated payers in the same
+            // transaction as a contract already caught lying. Reverting also unwinds the transfer
+            // this call just made, which a skip cannot. Screen tokens before batching.
+            if (!FHEUtils.isAuthorizedOn(FHE.toBytes32(transferred), token)) revert InvalidReturnedHandle();
             _recordSpend(from, token, msg.sender, transferred);
             FHE.allowTransient(transferred, msg.sender);
             emit AllowanceTransfer(from, to, token, msg.sender, transferred);

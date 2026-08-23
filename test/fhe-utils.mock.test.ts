@@ -185,6 +185,44 @@ describe("FHEUtils", () => {
     });
   });
 
+  describe("isAuthorizedOn", () => {
+    // The laundering shape is a handle some OTHER contract is authorized on, returned by a callee that
+    // is not. The check must separate the two even though both handles are real, initialized and
+    // allowed to somebody.
+    it("is true for a handle the contract computed, false for one only another contract holds", async () => {
+      const {
+        contract, send, alice, fhevm
+      } = await boot();
+      const { publicClient, wallets, store } = H;
+      const { contract: other } = await getOrDeployMockFHEUtilsHarness({
+        walletClient: wallets.deployer,
+        publicClient,
+        store,
+        args: [],
+        force: true,
+      });
+
+      await send(contract.write.produce([7n], fheTxOpts(alice.account)));
+      const own = await contract.read.lastResult();
+      expect(await contract.read.authorizedHere([own])).toBe(true);
+
+      // A handle the OTHER harness produced and is allowed on. This one never touched it.
+      await send(other.write.produce([9n], fheTxOpts(alice.account)));
+      const theirs = await other.read.lastResult();
+      expect(await other.read.authorizedHere([theirs])).toBe(true);
+      expect(await contract.read.authorizedHere([theirs])).toBe(false);
+
+      // And a handle nobody on-chain is allowed on, a client-side encryption never imported.
+      const [foreign] = await encryptValues(
+        fhevm.instance, [{
+          type: "add64",
+          value: 7n
+        }], alice.account.address, alice.account.address,
+      );
+      expect(await contract.read.authorizedHere([foreign])).toBe(false);
+    });
+  });
+
   describe("sum", () => {
     it("tree-reduces an odd-length input to the correct total", async () => {
       const {

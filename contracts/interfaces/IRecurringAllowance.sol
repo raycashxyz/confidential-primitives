@@ -130,6 +130,10 @@ interface IRecurringAllowance {
     error SpenderMismatch();
     /// @dev The permit binds a recipient and `to` differs from it.
     error RecipientMismatch();
+    /// @dev The `token` returned an encrypted handle that it is not itself ACL-authorized on, so it
+    ///      cannot be a value the token computed. Accepting it would launder a third party's
+    ///      ciphertext into the caller's own decryptable state.
+    error InvalidReturnedHandle();
 
     /// @notice A new permission was created.
     event PermissionSet(
