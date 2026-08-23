@@ -6,7 +6,7 @@
 import {
   describe, it, expect
 } from "vitest";
-import { decodeEventLog, parseAbiItem } from "viem";
+import { decodeEventLog, parseAbiItem, zeroHash } from "viem";
 
 import { useBatchedSuite, AMOUNT, SEAL_DELAY } from "./setup/suite";
 import { encryptRecipient } from "../setup/fhe";
@@ -214,9 +214,9 @@ describe("BatchedStealthWrapAdapter", () => {
       // A LATER transaction. The deposit-time transient grant is long gone, so this only works if
       // the hook persisted access.
       await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
-      // The finalize recorded alice's claim, which it could only compute if the hook had persisted
-      // ACL access to eAmount.
-      expect(await wrapper.read.finalized([0n, alice.account.address])).toBe(true);
+      // The finalize recorded a claim for alice (its encrypted amount handle is now set), which it
+      // could only compute if the hook had persisted ACL access to eAmount.
+      expect(await wrapper.read.claimedAmount([0n, alice.account.address])).not.toBe(zeroHash);
     });
 
     it("lets a subclass override initWrap and record through the batched deposit hook", async () => {

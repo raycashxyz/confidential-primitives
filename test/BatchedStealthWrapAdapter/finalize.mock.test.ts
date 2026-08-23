@@ -57,7 +57,7 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     expect(await decryptBalance(alice)).toBe(AMOUNT * 3n); // after
   });
 
-  it("is replay-safe: a second finalize for the same (batch, recipient) reverts", async () => {
+  it("does not double-pay a fully claimed batch on replay", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
     } = await boot();
@@ -70,11 +70,35 @@ describe("BatchedStealthWrapAdapter finalizeWrap", () => {
     const afterFirst = await decryptBalance(alice);
     expect(afterFirst).toBe(AMOUNT * 2n);
 
-    await assertRevertsWith(
-      wrapper.write.finalizeWrap([[0n], alice.account.address], txOpts(alice.account)),
-      "AlreadyFinalized",
-    );
+    // A replay does not revert, since there is no cleartext nullifier, but `owed` is now zero so it delivers
+    // nothing. The accumulator, not a boolean, is what stops the double-pay.
+    await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(alice.account)));
     expect(await decryptBalance(alice)).toBe(afterFirst); // unchanged
+  });
+
+  // `ids` and `recipient` are both visible in the mempool. The old all-or-nothing nullifier let a
+  // front-run of one batch revert the whole multi-batch call. The accumulator makes an
+  // already-claimed batch contribute an encrypted zero instead, so the original call still lands.
+  it("a front-run of one batch does not break the multi-batch finalize", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
+    } = await boot();
+    const { alice, bob } = wallets;
+    const { contract: wrapper } = await deployWrapper(2n);
+    await fundAndApprove(wrapper, alice, 4n);
+    for (let i = 0; i < 4; i++) await initWrap(wrapper, alice, alice.account.address); // batches 0, 1
+
+    // The front-run. A third party claims batch 0 for alice. She still receives the money.
+    await send(wrapper.write.finalizeWrap([[0n], alice.account.address], fheTxOpts(bob.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 2n);
+
+    // Alice's original [0, 1] call succeeds, paying only what batch 1 still owes.
+    await send(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
+
+    // A fully-claimed replay is a no-op, not a revert.
+    await send(wrapper.write.finalizeWrap([[0n, 1n], alice.account.address], fheTxOpts(alice.account)));
+    expect(await decryptBalance(alice)).toBe(AMOUNT * 4n);
   });
 
   it("pays each recipient only their own deposits from a shared batch", async () => {

@@ -33,7 +33,7 @@ Our adapters close that last gap, and without replacing anything: a stealth wrap
 
 These two are a starting point, not the whole space. `StealthWrapAdapter` is built to be extended: implement `finalizeWrap` over its escrow and delivery, and you can form the anonymity set your own way (time-windowed, tiered by amount, allowlist-scoped, whatever your threat model calls for). If you build one, we'd love to see it.
 
-`BatchedStealthWrapAdapter` also supports a narrower extension: when only *how a deposit is acquired* changes, a derived adapter can reuse its batch, nullifier, and accounting machinery. Acquire the funds into escrow with `_wrapIntoEscrow(depositor, amount)`, then call `_recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, recipient)`. Both `initWrap` and `finalizeWrap` are virtual, so a derived adapter can replace either public entrypoint; an entrypoint that calls the escrow helper must remain `nonReentrant`.
+`BatchedStealthWrapAdapter` also supports a narrower extension: when only *how a deposit is acquired* changes, a derived adapter can reuse its batch, claim-ledger and accounting machinery. Acquire the funds into escrow with `_wrapIntoEscrow(depositor, amount)`, then call `_recordBatchedDeposit(depositor, wrappedUnderlying, eAmount, recipient)`. Both `initWrap` and `finalizeWrap` are virtual, so a derived adapter can replace either public entrypoint; an entrypoint that calls the escrow helper must remain `nonReentrant`.
 
 ### How it works
 
@@ -45,6 +45,8 @@ These two are a starting point, not the whole space. `StealthWrapAdapter` is bui
 
 The underlying `ERC7984ERC20Wrapper` handles unwrapping back to the clear ERC-20 once the recipient holds confidential balance.
 
+**The wrapper you point at must be exact-or-revert on `wrap`, and on `confidentialTransfer` unless the adapter's finalize path is retry-safe.** ERC-7984 permits an operation to *soft-fail*, returning an encrypted zero while the transaction succeeds, and the outcome is a ciphertext while every decision the adapters make is cleartext. On the deposit side both adapters are exposed. OpenZeppelin's wrapper moves the underlying before `_mint`, so a rejecting mint hook substitutes an encrypted zero and the adapter records a worthless deposit against underlying the wrapper has already kept. On the finalize side it differs. `BatchedStealthWrapAdapter` keeps an encrypted per-recipient `claimed` ledger, pays `matched - claimed` and credits back only what the wrapper reports it moved, so a soft-failed or partial payout leaves the remainder claimable. `ContinuousStealthWrapAdapter` consumes deposits by zeroing them before the transfer and cannot attribute a partial payout back to individual deposits in a flat pool, so there a soft-failed payout destroys the claim. A bare `ERC7984ERC20Wrapper` is fine for both. An `ERC7984Hooked` one is only as safe as the modules its admin can install, including ones installed *after* deposits are already escrowed.
+
 ### Choosing an adapter
 
 Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implementations of the abstract `StealthWrapAdapter` and share its escrow-and-deliver machinery. They differ only in how the anonymity set is formed, and that one difference cascades into privacy, liveness, and gas.
@@ -54,7 +56,7 @@ Both `ContinuousStealthWrapAdapter` and `BatchedStealthWrapAdapter` are implemen
 | Finalization unit | Caller-selected deposit ids | Closed batch ids |
 | Anonymity set | The selected ids, with `minDecoys` as a lower bound | Every deposit in the closed batch |
 | Decoy quality | Flexible, but caller-controlled | Protocol-shaped by batch size and seal delay |
-| Replay protection | Matched encrypted deposit amounts are rewritten to zero | Clear `(batch, recipient)` nullifier |
+| Replay protection | Matched encrypted deposit amounts are rewritten to zero | Encrypted per-`(batch, recipient)` claimed ledger, and a repeat pays an encrypted zero |
 | Liveness | Can finalize as soon as enough decoys exist | Batch fills, or closes after `sealDelay` on `sealBatch` / first finalize |
 
 `ContinuousStealthWrapAdapter` is the flexible primitive: callers can choose any sorted deposit ids, but weak decoy selection produces a weak anonymity set. `BatchedStealthWrapAdapter` is stricter: the anonymity set is the whole closed batch, which gives a clearer privacy rule at the cost of batching latency. Partial tail batches can still close after `sealDelay`, either through `sealBatch` or automatically on the first eligible `finalizeWrap`, so funds can't get stranded in a batch that never fills.
