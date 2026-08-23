@@ -31,8 +31,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         address underlying_ = confidentialWrapper_.underlying();
         if (underlying_ == address(0)) revert ZeroAddress();
 
-        // rate() is the wrap divisor used in _wrapIntoEscrow (`amount % rate`); a zero rate
-        // would panic on every deposit. A valid OZ ERC7984ERC20Wrapper never returns 0.
+        // `rate()` divides every deposit in {_wrapIntoEscrow}. Zero would panic on each one.
         if (confidentialWrapper_.rate() == 0) revert InvalidRate();
 
         CONFIDENTIAL_WRAPPER = confidentialWrapper_;

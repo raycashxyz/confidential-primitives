@@ -1,7 +1,7 @@
 /**
- * BatchedStealthWrapAdapter — constructor + initWrap.
- * (finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
- * so vitest can run them on separate workers; all share the harness in setup/suite.)
+ * BatchedStealthWrapAdapter: constructor + initWrap.
+ * finalizeWrap and sealBatch live in the sibling *.finalize / *.finalize-scale / *.seal files
+ * so vitest can run them on separate workers. All share the harness in setup/suite.
  */
 import {
   describe, it, expect
@@ -89,7 +89,6 @@ describe("BatchedStealthWrapAdapter", () => {
   });
 
   describe("initWrap", () => {
-
     // Every legitimate deposit carries a proof. `FHEUtils.fromExternalForThis` rejects an empty one before
     // the coprocessor is called.
     it("rejects an empty inputProof (the handle would skip the coprocessor's type check)", async () => {
@@ -406,8 +405,8 @@ describe("BatchedStealthWrapAdapter", () => {
         "ZeroAmount",
       );
 
-      // Non-multiples are rounded down by the configured wrapper; the adapter
-      // records the amount actually wrapped, not the requested amount.
+      // Non-multiples are rounded down by the configured wrapper. The adapter
+      // records the amount wrapped, not the requested amount.
       const { handle: h2, inputProof: p2 } = await encryptRecipient(
         fhevm.instance, wrapper.address, alice.account.address, alice.account.address,
       );
@@ -514,5 +513,6 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await wrapper.read.getDepositsLength()).toBe(2n);
     });
   });
+
 
 });

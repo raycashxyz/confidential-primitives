@@ -12,12 +12,12 @@ import { getOrDeployMockCapStealingSpender } from "../../src/deployers/MockCapSt
 describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
   const S = useAllowanceSuite();
 
-  // The struct passed to the contract call (no owner/epoch — those are bound at
-  // verification from the function arg and on-chain storage, not the calldata struct).
+  // The struct passed to the contract call. Owner and epoch are bound at
+  // verification from the function arg and on-chain storage, not the calldata struct.
   type GrantStruct = Omit<PermitGrantMessage, "owner" | "epoch">;
   type SpendStruct = Omit<PermitSpendMessage, "owner" | "epoch">;
 
-  /** Owner-side of the gasless-grant handshake: encrypt the limit BOUND TO THE SPENDER. */
+  /** Owner-side of the gasless-grant handshake. Encrypt the limit BOUND TO THE SPENDER. */
   const makeGrant = async (params: {
     owner: "alice";
     spender: Hex;
@@ -88,28 +88,6 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       signature
     };
   };
-  // Same gate as setPermission. The gasless path must not become a way to store an unverified,
-  // untyped handle as a permission limit.
-  it("rejects a grant submitted with an empty inputProof", async () => {
-    const { H, allowance } = S.ctx();
-    const { alice, bob } = H.wallets;
-
-    const { grant, signature } = await makeGrant({
-      owner: "alice",
-      spender: bob.account.address,
-      limit: 500n
-    });
-
-    await assertRevertsWith(
-      allowance.write.permitSetPermission([
-        alice.account.address,
-        grant,
-        "0x",
-        signature
-      ], txOpts(bob.account)),
-      "MissingInputProof",
-    );
-  });
 
   // The cheque path is the most direct version of the stolen-return-handle attack. It hands the
   // token's return value straight to `msg.sender` via allowTransient, so a contract spender can
@@ -269,7 +247,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       limit: 500n
     });
 
-    // BOB submits — alice signs only.
+    // BOB submits. Alice signs only.
     const receipt = await S.sendOk(allowance.write.permitSetPermission([
       alice.account.address,
       grant,
@@ -285,7 +263,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     expect(getAddress(event.args.user)).toBe(getAddress(alice.account.address));
     expect(getAddress(event.args.spender)).toBe(getAddress(bob.account.address));
 
-    // The permission is a completely normal one: bob can pull against it,
+    // The permission is a completely normal one. Bob can pull against it,
     // and both parties can decrypt it.
     const permission = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(await S.decryptAllowanceHandle(permission.limit, alice)).toBe(500n);
@@ -301,6 +279,29 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(300n);
   });
 
+  // Same gate as setPermission. The gasless path must not become a way to store an unverified,
+  // untyped handle as a permission limit.
+  it("rejects a grant submitted with an empty inputProof", async () => {
+    const { H, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+
+    const { grant, signature } = await makeGrant({
+      owner: "alice",
+      spender: bob.account.address,
+      limit: 500n
+    });
+
+    await assertRevertsWith(
+      allowance.write.permitSetPermission([
+        alice.account.address,
+        grant,
+        "0x",
+        signature
+      ], txOpts(bob.account)),
+      "MissingInputProof",
+    );
+  });
+
   it("rejects bad grant submissions: wrong signer, wrong submitter, expired, replayed", async () => {
     const { H, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;
@@ -312,7 +313,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       limit: 500n
     });
 
-    // Signed by bob but claimed from alice -> InvalidSigner (bob signs the same message).
+    // Signed by bob but claimed from alice -> InvalidSigner, since bob signs the same message.
     const bobSignature = await S.signPermitGrant(bob, {
       owner: alice.account.address,
       epoch: 0n,
@@ -357,7 +358,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
       "SignatureExpired",
     );
 
-    // Valid submission consumes the nonce; replay -> InvalidNonce.
+    // Valid submission consumes the nonce. Replay -> InvalidNonce.
     await S.sendOk(allowance.write.permitSetPermission([
       alice.account.address,
       grant,
@@ -431,7 +432,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     ], fheTxOpts(bob.account)));
     expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(1n);
 
-    // Word 1 now has bit 44 set; a fresh nonce in the same word still works.
+    // Word 1 now has bit 44 set. A fresh nonce in the same word still works.
     const second = await makeGrant({
       owner: "alice",
       spender: bob.account.address,
@@ -476,7 +477,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     expect(event.args.newEpoch).toBe(1n);
     expect(await allowance.read.permitEpoch([alice.account.address])).toBe(1n);
 
-    // Both epoch-0 signatures now fail verification (digest binds the current epoch).
+    // Both epoch-0 signatures now fail verification, since the digest binds the current epoch.
     await assertRevertsWith(
       allowance.write.permitSetPermission([
         alice.account.address,
@@ -553,7 +554,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
     // No stored permission was involved.
     expect(await allowance.read.getGrantedPairCount([alice.account.address])).toBe(0n);
 
-    // The nonce is one-shot: a replay fails even though the cap wasn't exhausted.
+    // The nonce is one-shot. A replay fails even though the cap wasn't exhausted.
     const requested2 = await S.encAmount(allowance.address, bob.account.address, 100n);
     await assertRevertsWith(
       allowance.write.permitTransferFrom([
@@ -593,7 +594,7 @@ describe("RecurringAllowance: signature permits (FHEPermit2)", () => {
 
     expect(await S.balanceOf(carol)).toBe(0n);
     expect(await S.balanceOf(alice)).toBe(10_000n);
-    // Documented cheque semantics: consumed on submission regardless of outcome.
+    // Documented cheque semantics, consumed on submission regardless of outcome.
     expect(await allowance.read.nonceBitmap([alice.account.address, 0n])).toBe(1n);
   });
 

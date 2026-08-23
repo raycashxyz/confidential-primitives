@@ -10,11 +10,9 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  * @title ContinuousStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Continuous stealth wrap adapter for an existing ERC7984ERC20Wrapper.
- *
- *         Deposits accumulate in one shared pool and are finalized by
- *         caller-selected ids. This gives maximum flexibility, but the caller
- *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
+ * @notice Stealth wrap adapter over one shared pool. Deposits accumulate continuously and become
+ *         finalizable once the pool holds at least `minDecoys` of them. The caller chooses which
+ *         ids form the anonymity set, and `minDecoys` enforces only its size.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     /// @dev `minDecoys` is zero or above the largest scan one transaction can execute.
@@ -83,6 +81,18 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
         emit WrapInitiated(depositIndex, msg.sender, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
     }
 
+    /**
+     * @notice Match the caller-chosen `ids` against `recipient`, transfer the encrypted sum and zero
+     *         each matched deposit so it cannot pay again.
+     * @dev Requires an exact-or-revert wrapper. Matched deposits are zeroed before the transfer, so
+     *      a wrapper that soft-fails, moving zero or part on a freeze, pause or hook veto, consumes
+     *      the claim and strands the funds. The id set is caller-chosen over a flat pool, so there is
+     *      no stable unit to keep a claimed ledger against and a partial transfer cannot be
+     *      attributed back to individual deposits. See {BatchedStealthWrapAdapter} for the
+     *      retry-safe design.
+     * @param ids Deposit indices to scan. Must be strictly increasing and at least `minDecoys` long.
+     * @param recipient Address to match deposits against and transfer to.
+     */
     function finalizeWrap(uint256[] calldata ids, address recipient) external override nonReentrant {
         if (ids.length < minDecoys) revert TooFewDecoys();
         if (recipient == address(0)) revert ZeroAddress();

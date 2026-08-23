@@ -10,38 +10,17 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  * @title BatchedStealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Batch-based stealth wrap adapter with a cleartext per-(batch, recipient)
- *         nullifier and a tree-reduced payout sum.
+ * @notice Stealth wrap adapter that groups deposits into fixed-size batches. A deposit is
+ *         sender-transparent, with depositor and clear amount public, and recipient-private, with
+ *         the recipient an `eaddress`. {finalizeWrap} scans whole batches, so the batch is the
+ *         anonymity set and the transferred sum stays encrypted. Observers learn only that
+ *         `recipient` finalized batch `B`.
  *
- *         Same privacy model as the other adapters: a deposit is SENDER-TRANSPARENT
- *         (depositor + cleartext amount are public) but RECIPIENT-PRIVATE (an
- *         `eaddress`). finalize scans whole batches, so the decoy set is the batch and
- *         the transferred sum stays encrypted — observers learn only "R finalized batch B".
- *
- *         The recipient is already public at finalize time
- *            (it is an address argument, emitted in {WrapFinalized}), so a plain
- *            `finalized[batchId][recipient]` bool leaks nothing the call does not
- *            already reveal.
- *
- *         The payout sum is tree-reduced via {_sumTree}. Pairwise reduction keeps the
- *         critical path to ceil(log2 N) adds, so {finalizeWrap} is bounded by the
- *         FHEVM total-HCU budget rather than a long serial add chain.
- *
- *         Tradeoff: the nullifier is all-or-nothing per (batch, recipient), so a batch
- *         must be CLOSED (full, or timeout-sealed via {sealBatch}) before finalizing —
- *         this freezes each recipient's matched set (no later top-ups into a finalized
- *         batch). Tail batches can close only after `sealDelay`: either explicitly via
- *         {sealBatch} or automatically on the first {finalizeWrap} attempt, so funds
- *         cannot stay stuck without allowing premature one-deposit batches.
- *
- *         Recipient handshake (how the depositor never learns the recipient): the
- *         RECIPIENT encrypts their own address off-chain with the input proof bound to
- *         the DEPOSITOR as userAddress, and hands (handle, proof) to the depositor,
- *         who submits it via {initWrap}. The recipient recognises their deposit by
- *         watching for their handle in {WrapInitiated}.
- *
- *         Like the other adapters: deposits are wrapped immediately into confidential
- *         balance owned by this contract, then transferred to recipients on finalize.
+ * @dev A batch closes when it fills, or after `sealDelay` from its first deposit through {sealBatch}
+ *      or the first {finalizeWrap} that finds it eligible. Only closed batches finalize. The
+ *      recipient spots their deposit by watching for their handle in {WrapInitiated}. Deposits are
+ *      wrapped into confidential balance held by this contract on deposit and transferred to
+ *      recipients on finalize.
  */
 contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     /// @dev Hard cap on batch size, so one batch always finalizes within the FHEVM 20M HCU
@@ -77,7 +56,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     struct Deposit {
         address depositor;
-        uint256 amount; // cleartext — the transparent side of the mix
+        uint256 amount; // cleartext: the transparent side of the mix
         euint64 eAmount;
         eaddress eRecipient;
     }
@@ -108,10 +87,6 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         StealthWrapAdapter(confidentialWrapper_)
     {
         if (_maxBatchDeposits == 0 || _maxBatchDeposits > MAX_BATCH_LIMIT) revert InvalidBatchSize();
-        // sealBatch's griefer-resistance IS the delay: with sealDelay = 0 anyone could
-        // seal every batch at fill count 1, collapsing the anonymity set to a single
-        // deposit. Zero is rejected; choosing a meaningfully large delay (hours) is
-        // still the deployer's responsibility, like maxBatchDeposits itself.
         if (_sealDelay == 0) revert SealDelayTooShort();
         maxBatchDeposits = _maxBatchDeposits;
         sealDelay = _sealDelay;
@@ -129,6 +104,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return _batches[batchId].closed;
     }
 
+    /// @notice When the batch's seal deadline is anchored (its first deposit). Zero if untouched.
     /// @notice When the batch opened, meaning its first deposit landed. Zero before that.
     function batchOpenedAt(uint256 batchId) public view returns (uint64) {
         return _batches[batchId].openedAt;
@@ -143,9 +119,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     // -----------------------------------------------------------------------
-    // initWrap: pull + wrap tokens into escrow, then record a write-once deposit.
-    // The token pull is an external call, so re-entry into any state-changing
-    // entrypoint (initWrap / finalizeWrap / sealBatch) is blocked by nonReentrant.
+    // Deposits
     // -----------------------------------------------------------------------
 
     /**
@@ -182,12 +156,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     /**
-     * @dev Record an already-wrapped deposit in the current batch.
-     *
-     *      Kept separate from token acquisition so derived adapters can source deposits
-     *      differently while preserving this adapter's batch selection, close, and
-     *      accounting semantics. Callers that acquire tokens through external calls
-     *      must ensure their public entrypoint is `nonReentrant` before calling this.
+     * @dev Record an already-wrapped deposit in the current batch. Separate from token acquisition
+     *      so derived adapters can source deposits differently while keeping this adapter's batch
+     *      selection, close and accounting.
      */
     function _recordBatchedDeposit(
         address depositor,
@@ -230,7 +201,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     }
 
     // -----------------------------------------------------------------------
-    // sealBatch: liveness escape hatch for a tail batch that never fills
+    // Sealing
     // -----------------------------------------------------------------------
 
     /**
@@ -338,7 +309,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return block.timestamp >= uint256(batch.openedAt) + sealDelay;
     }
 
-    // Raw state transition: callers must first prove the batch is full or delay-eligible.
+    // Raw state transition. Callers must first prove the batch is full or delay-eligible.
     function _closeBatchUnchecked(uint256 batchId, Batch storage batch) internal {
         batch.closed = true;
         if (batchId == currentBatchId) currentBatchId = batchId + 1;
