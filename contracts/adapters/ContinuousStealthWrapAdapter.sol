@@ -17,6 +17,11 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
+    /// @dev `minDecoys` is zero or above the largest scan one transaction can execute.
+    error InvalidMinDecoys();
+    /// @dev The finalize id set is smaller than `minDecoys`.
+    error TooFewDecoys();
+
     /// @dev Hard cap on the decoy floor. `minDecoys` is a minimum every finalize must scan, so a
     ///      floor above what one transaction can execute would strand every deposit. Fewer ids
     ///      revert `TooFewDecoys`, more revert on the FHEVM budget, and `minDecoys` is immutable.
