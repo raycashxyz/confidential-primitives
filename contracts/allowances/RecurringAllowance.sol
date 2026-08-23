@@ -284,6 +284,8 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
         Permission storage permission = permissions[_findPermission(permissions, permissionId)];
 
+        bool gridChanged = _applyWindowUpdate(permission, duration, startTime, endTime);
+
         if (inputProof.length > 0) {
             euint64 eLimit = FHEUtils.fromExternalForThis(limit, inputProof, msg.sender);
             permission.limit = eLimit;
@@ -291,22 +293,6 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
             FHE.allow(eLimit, msg.sender);
             FHE.allow(eLimit, spender);
         }
-
-        bool gridChanged;
-        if (duration != 0 && duration != permission.duration) {
-            permission.duration = duration;
-            gridChanged = true;
-        }
-        if (startTime != 0 && startTime != permission.startTime) {
-            permission.startTime = startTime;
-            gridChanged = true;
-        }
-        if (endTime != 0) {
-            permission.endTime = endTime;
-        }
-        // The permission must come out of an update live or future-dated; expiring one
-        // is invalidatePermission's job.
-        _checkWindow(permission.startTime, permission.endTime);
 
         if (gridChanged) {
             permission.spent = E_ZERO;
@@ -757,6 +743,31 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (!SignatureChecker.isValidSignatureNowCalldata(owner, _hashTypedDataV4(structHash), signature)) {
             revert InvalidSigner();
         }
+    }
+
+    /**
+     * @dev Cleartext half of {updatePermission}. Resolves the zero-sentinels against the stored
+     *      record, validates the window, commits the time fields and reports whether the period grid
+     *      moved. Split out so the cleartext decision happens before any ciphertext import, and
+     *      because the three resolved values overflow the stack inline. A permission must come out
+     *      of an update live or future-dated. Expiring one is {invalidatePermission}'s job.
+     */
+    function _applyWindowUpdate(
+        Permission storage permission,
+        uint64 duration,
+        uint64 startTime,
+        uint64 endTime
+    ) private returns (bool gridChanged) {
+        uint64 newDuration = duration == 0 ? permission.duration : duration;
+        uint64 newStartTime = startTime == 0 ? permission.startTime : startTime;
+        uint64 newEndTime = endTime == 0 ? permission.endTime : endTime;
+        _checkWindow(newStartTime, newEndTime);
+
+        gridChanged = newDuration != permission.duration || newStartTime != permission.startTime;
+
+        permission.duration = newDuration;
+        permission.startTime = newStartTime;
+        permission.endTime = newEndTime;
     }
 
     /**
