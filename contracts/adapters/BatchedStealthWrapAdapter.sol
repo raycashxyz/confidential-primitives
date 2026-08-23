@@ -104,7 +104,6 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return _batches[batchId].closed;
     }
 
-    /// @notice When the batch's seal deadline is anchored (its first deposit). Zero if untouched.
     /// @notice When the batch opened, meaning its first deposit landed. Zero before that.
     function batchOpenedAt(uint256 batchId) public view returns (uint64) {
         return _batches[batchId].openedAt;
