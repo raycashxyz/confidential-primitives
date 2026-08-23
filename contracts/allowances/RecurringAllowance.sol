@@ -595,10 +595,15 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     /**
-     * @dev Lenient sibling of {_spend} for {tryTransferFrom}: cleartext failures skip
-     *      instead of reverting. The try/catch is safe against a malicious token — a
-     *      reverting call rolls back its own effects, our state writes only happen on
-     *      success, and reentrancy is blocked at the entry point.
+     * @dev Lenient sibling of {_spend} for {tryTransferFrom}. Cleartext failures skip instead of
+     *      reverting. The try/catch is safe against a malicious token because a reverting call
+     *      rolls back its own effects and reentrancy is blocked at the entrypoint.
+     *
+     *      Only spend accounting is conditional on the token call succeeding. The maintenance
+     *      {_evaluatePermissions} performs, meaning pruned expired entries, period resets and an
+     *      emptied key unlisted from {getGrantedPairs}, persists when the catch branch fires. None
+     *      of it is harmful, since the next successful spend would do the same, but a spender can
+     *      drive it without moving funds, which is why owner-facing writes address permissions by id.
      */
     function _trySpend(address from, address to, euint64 amount, address token) private returns (bool) {
         (ebool permitted, bool anyActive) = _evaluatePermissions(from, token, msg.sender, amount);
