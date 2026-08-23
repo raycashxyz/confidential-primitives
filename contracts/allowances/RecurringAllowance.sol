@@ -262,14 +262,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      * @notice Modify an existing permission. Zero-valued parameters mean "leave unchanged"
      *         (to actually set a field to its "unlimited" value, pass `type(uint64).max`;
      *         to skip the limit, pass an empty `inputProof`).
-     * @dev Changing `duration` or `startTime` to a DIFFERENT value re-anchors the period
-     *      grid, so `spent` resets — otherwise the old grid's spend history would be
-     *      measured against the new grid (and a future `startTime` would make the reset
-     *      math underflow). Re-submitting the SAME value is a no-op and does NOT reset,
-     *      so a wallet echoing back a full record can't silently refresh the budget.
-     *      Changing only `limit` keeps the current period's `spent`: lowering the limit
-     *      below what is already spent simply blocks further spending until the next reset.
-     *      The permission is addressed by its stable `permissionId` (see {_findPermission}).
+     * @dev Changing `duration` or `startTime` to a different value re-anchors the period grid. The
+     *      current `spent` carries into the first period of the new grid and clears at that grid's
+     *      next boundary, so a grid change never releases budget mid-period. Re-submitting the same
+     *      value is a no-op, so a wallet echoing back a full record changes nothing. To release the
+     *      budget explicitly, use {invalidatePermission} and re-grant.
      */
     function updatePermission(
         address token,
@@ -295,10 +292,10 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         }
 
         if (gridChanged) {
-            permission.spent = E_ZERO;
-            // Anchor accounting so `spent` is fresh for the CURRENT grid period and does
-            // not immediately re-reset: clamp to now for a started grid, or to startTime
-            // while future-dated (keeps the startTime <= lastUpdated invariant).
+            // `spent` carries into the first period of the new grid, so a grid change never releases
+            // budget. Anchor `lastUpdated` to now for a started grid, or to `startTime` while
+            // future-dated, which keeps the startTime <= lastUpdated invariant and stops the carried
+            // value from resetting on the next spend.
             permission.lastUpdated =
                 permission.startTime > uint64(block.timestamp) ? permission.startTime : uint64(block.timestamp);
         }

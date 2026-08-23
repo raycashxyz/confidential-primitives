@@ -232,8 +232,8 @@ interface IRecurringAllowance {
     ) external returns (uint256 permissionId);
 
     /// @notice Modify an existing permission of the caller, addressed by its stable `permissionId`.
-    ///         Zero-valued time fields and an empty `inputProof` mean "leave unchanged";
-    ///         changing the grid (`duration`/`startTime`) resets `spent`.
+    ///         Zero-valued time fields and an empty `inputProof` mean "leave unchanged". Changing
+    ///         the grid (`duration`/`startTime`) re-anchors it, and `spent` carries over.
     function updatePermission(
         address token,
         address spender,

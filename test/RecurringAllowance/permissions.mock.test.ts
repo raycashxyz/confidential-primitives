@@ -209,7 +209,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(updated.duration).toBe(beforeUpdate.duration);
   });
 
-  it("re-anchors the grid (and resets spent) when duration or startTime changes", async () => {
+  it("re-anchors the grid and carries spent over when duration or startTime changes", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;
 
@@ -243,12 +243,21 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const blockTimestamp = await S.now();
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(updated.duration).toBe(WEEK);
-    expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(0n); // reset
-    // startTime is unchanged; lastUpdated re-anchors to now (>= startTime) so `spent` is
-    // fresh for the current grid period and does not immediately re-reset on next spend.
+    expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(200n); // carried over
+    // startTime is unchanged. lastUpdated re-anchors to now (>= startTime) so the carried
+    // `spent` counts toward the current grid period instead of resetting on the next spend.
     expect(updated.startTime).toBe(before.startTime);
     expect(updated.lastUpdated).toBe(blockTimestamp);
     expect(updated.lastUpdated).toBeGreaterThanOrEqual(updated.startTime);
+
+    // The carried value counts against the new grid: 300 more fits the 500 limit exactly.
+    await S.spend({
+      spender: bob,
+      from: alice.account.address,
+      to: carol.account.address,
+      amount: 300n
+    });
+    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(500n);
   });
 
   it("does NOT reset spent when duration/startTime are re-submitted unchanged", async () => {

@@ -234,7 +234,7 @@ describe("RecurringAllowance: periods and security regressions", () => {
       amount: 20n
     });
     expect(await S.balanceOf(carol)).toBe(50n);
-    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(20n); // fresh grid
+    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(50n); // 30 carried + 20
   });
 
   it("keeps not-yet-started permissions untouched by spends", async () => {
