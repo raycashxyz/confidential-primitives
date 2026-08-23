@@ -57,7 +57,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
     uint256 public immutable maxBatchDeposits;
 
-    /// @notice Seconds after a batch's last deposit before anyone may {sealBatch} it.
+    /// @notice Seconds after a batch opens, with its first deposit, before anyone may {sealBatch} it.
     uint256 public immutable sealDelay;
 
     /// @notice Batch currently accepting deposits.
@@ -74,7 +74,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     struct Batch {
         uint256 fillCount;
         bool closed;
-        uint64 lastDepositAt;
+        uint64 openedAt;
         mapping(address recipient => bool) finalized;
     }
 
@@ -133,8 +133,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return _batches[batchId].closed;
     }
 
-    function batchLastDepositAt(uint256 batchId) public view returns (uint64) {
-        return _batches[batchId].lastDepositAt;
+    /// @notice When the batch opened, meaning its first deposit landed. Zero before that.
+    function batchOpenedAt(uint256 batchId) public view returns (uint64) {
+        return _batches[batchId].openedAt;
     }
 
     function finalized(uint256 batchId, address recipient) public view returns (bool) {
@@ -204,7 +205,7 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         });
 
         batch.fillCount = batchIndex + 1;
-        batch.lastDepositAt = uint64(block.timestamp);
+        if (batchIndex == 0) batch.openedAt = uint64(block.timestamp);
         totalDeposits += 1;
 
         // Emit before the close so log order matches the lifecycle.
@@ -218,10 +219,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     // -----------------------------------------------------------------------
 
     /**
-     * @notice Close the current, still-open batch early so its deposits can be
-     *         finalized. Permissionless, but only after `sealDelay` since the last
-     *         deposit. finalizeWrap performs the same close automatically when it
-     *         first sees an eligible open batch.
+     * @notice Close the current batch early so its deposits can be finalized. Permissionless once
+     *         `sealDelay` has passed since the batch opened. {finalizeWrap} performs the
+     *         same close when it first finds an eligible open batch.
      */
     function sealBatch(uint256 batchId) external nonReentrant {
         if (batchId != currentBatchId) revert NotCurrentBatch();
@@ -298,8 +298,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         _closeBatchUnchecked(batchId, batch);
     }
 
+    /// @dev Callers must have established `fillCount > 0`, so `openedAt` is set.
     function _sealDelayElapsed(Batch storage batch) internal view returns (bool) {
-        return block.timestamp >= uint256(batch.lastDepositAt) + sealDelay;
+        return block.timestamp >= uint256(batch.openedAt) + sealDelay;
     }
 
     // Raw state transition: callers must first prove the batch is full or delay-eligible.

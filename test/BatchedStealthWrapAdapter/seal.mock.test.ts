@@ -29,6 +29,38 @@ describe("BatchedStealthWrapAdapter sealBatch", () => {
     );
   });
 
+  // With the timer anchored to the LAST deposit, anyone could push the deadline out one dust
+  // deposit at a time for every free slot, up to ~(maxBatchDeposits - fillCount) * sealDelay, and
+  // since finalizeWrap names its recipient in cleartext calldata, aimed at a specific pending
+  // finalization. Anchoring to the first deposit gives the batch a lifetime nobody can extend.
+  it("does not let later deposits push out the seal deadline", async () => {
+    const {
+      wallets, deployWrapper, fundAndApprove, initWrap, send, warpTime
+    } = await boot();
+    const { alice, bob } = wallets;
+    const { contract: wrapper } = await deployWrapper(4n);
+    await fundAndApprove(wrapper, alice, 1n);
+    await fundAndApprove(wrapper, bob, 2n);
+
+    await initWrap(wrapper, alice, alice.account.address);
+    const anchor = await wrapper.read.batchOpenedAt([0n]);
+    expect(anchor).toBeGreaterThan(0n);
+
+    // A griefer tops the batch up twice, well inside the window.
+    await warpTime(SEAL_DELAY / 2n);
+    await initWrap(wrapper, bob, bob.account.address);
+    await warpTime(SEAL_DELAY / 2n - 10n);
+    await initWrap(wrapper, bob, bob.account.address);
+
+    // The anchor never moved.
+    expect(await wrapper.read.batchOpenedAt([0n])).toBe(anchor);
+
+    // ...so the batch seals on schedule rather than a delay per remaining slot.
+    await warpTime(20n);
+    await send(wrapper.write.sealBatch([0n], fheTxOpts(alice.account)));
+    expect(await wrapper.read.batchClosed([0n])).toBe(true);
+  });
+
   it("reverts on an empty batch", async () => {
     const { wallets, deployWrapper } = await boot();
     const { contract: wrapper } = await deployWrapper(4n);
