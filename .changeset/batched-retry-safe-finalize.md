@@ -7,5 +7,6 @@ per-recipient `claimed` total; a finalize pays `matched - claimed` and credits b
 reports it moved, clamped to what was owed. A transfer that moves zero or part leaves the exact
 remainder claimable, and a repeat finalize pays an encrypted zero instead of reverting.
 `AlreadyFinalized` and the `finalized(batchId, recipient)` view are replaced by
-`claimedAmount(batchId, recipient)`, and `WrapFinalized` is emitted once per batch. This lifts the
-exact-or-revert wrapper requirement from the batched finalize path.
+`claimedAmount(batchId, recipient)`, and `WrapFinalized` is emitted once per batch; the recipient
+can decrypt both the claimed total and the reported amount. This lifts the exact-or-revert wrapper
+requirement from the batched finalize path.

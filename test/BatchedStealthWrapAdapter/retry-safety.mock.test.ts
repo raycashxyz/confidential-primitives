@@ -10,7 +10,7 @@
 import {
   beforeAll, beforeEach, describe, expect, it
 } from "vitest";
-import { zeroHash } from "viem";
+import { parseEventLogs, zeroHash } from "viem";
 
 import { createHarness } from "../setup/harness";
 import type { Harness } from "../setup/harness";
@@ -158,6 +158,38 @@ describe("BatchedStealthWrapAdapter retry safety (#34)", () => {
     await setMode(NORMAL, 0n);
     await finalize(adapter, [0n], alice.account.address, alice);
     expect(await balanceOf(alice)).toBe(AMOUNT * 2n); // remainder delivered, total = matched
+  });
+
+  // `claimedAmount` and the amount `WrapFinalized` reports are the recipient's own figures, so the
+  // recipient can decrypt both: the partial credit first, the matched sum once the retry lands.
+  it("lets the recipient decrypt the claimed total and the reported amount", async () => {
+    const { alice, bob } = H.wallets;
+    const adapter = await deployAdapter(2n);
+    await fundAndApprove(adapter, alice, 2n);
+    await initWrap(adapter, alice, alice.account.address);
+    await initWrap(adapter, alice, alice.account.address); // matched = 200
+
+    const reportedAmount = (receipt: Awaited<ReturnType<typeof send>>) => {
+      const [event] = parseEventLogs({
+        abi: adapter.abi,
+        logs: receipt.logs,
+        eventName: "WrapFinalized"
+      });
+      if (!event) throw new Error("no WrapFinalized event");
+      return decryptEuint(H.fhevm.instance, event.args.amount, adapter.address, alice);
+    };
+    const claimed = async () =>
+      decryptEuint(H.fhevm.instance, await adapter.read.claimedAmount([0n, alice.account.address]), adapter.address, alice);
+
+    await setMode(PARTIAL, 50n);
+    const partial = await finalize(adapter, [0n], alice.account.address, bob); // a stranger may finalize
+    expect(await reportedAmount(partial)).toBe(50n);
+    expect(await claimed()).toBe(50n);
+
+    await setMode(NORMAL, 0n);
+    const retry = await finalize(adapter, [0n], alice.account.address, bob);
+    expect(await reportedAmount(retry)).toBe(AMOUNT * 2n - 50n);
+    expect(await claimed()).toBe(AMOUNT * 2n);
   });
 
   // The invariant that matters is that no sequence of soft-fails can pay a recipient more than their

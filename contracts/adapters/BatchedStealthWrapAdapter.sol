@@ -110,10 +110,9 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         return _batches[batchId].openedAt;
     }
 
-    /// @notice Encrypted amount already delivered to `recipient` from `batchId`. Equal to the
-    ///         recipient's matched sum once fully claimed, smaller after a soft-failed or partial
-    ///         finalize, and the zero handle before any finalize touched the pair. Compare it with
-    ///         the matched sum off-chain.
+    /// @notice Encrypted amount already delivered to `recipient` from `batchId`, decryptable by the
+    ///         recipient. Equal to their matched sum once fully claimed, smaller after a soft-failed
+    ///         or partial finalize, and the zero handle before any finalize touched the pair.
     function claimedAmount(uint256 batchId, address recipient) public view returns (euint64) {
         return _batches[batchId].claimed[recipient];
     }
@@ -261,7 +260,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
      *      `matched` is recomputed from the batch on every call, which is sound because deposits
      *      are immutable and the batch is closed, and is why matched amounts are not zeroed here.
      *      The credit commits after the external transfer, so the `nonReentrant` entrypoint is what
-     *      stops a re-entrant finalize from reading the stale ledger.
+     *      stops a re-entrant finalize from reading the stale ledger. The recipient is granted the
+     *      new `claimed` total, their own figure, so they can reconcile a batch off-chain.
+     *      {WrapFinalized} reports the amount the wrapper says it moved, which the wrapper has
+     *      already granted to the recipient and to this adapter.
      */
     function _finalizeBatch(uint256 batchId, Batch storage batch, address recipient) private {
         uint256 startIndex = batch.firstSlot;
@@ -282,17 +284,17 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
 
         euint64 transferred = _transferWrapped(recipient, owed);
         // Clamp the wrapper-reported amount to what was owed, so `claimed <= matched` holds by
-        // construction rather than by trusting the return value. The clamped figure is what
-        // {WrapFinalized} reports.
+        // construction rather than by trusting the return value.
         euint64 credited = FHE.min(transferred, owed);
 
         euint64 newClaimed = FHE.add(alreadyClaimed, credited);
         FHE.allowThis(newClaimed);
+        FHE.allow(newClaimed, recipient);
         batch.claimed[recipient] = newClaimed;
 
         uint256[] memory scannedIds = new uint256[](1);
         scannedIds[0] = batchId;
-        emit WrapFinalized(recipient, FHE.toBytes32(credited), scannedIds);
+        emit WrapFinalized(recipient, FHE.toBytes32(transferred), scannedIds);
     }
 
     function _ensureBatchClosedForFinalize(uint256 batchId, Batch storage batch) internal {
