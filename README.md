@@ -77,15 +77,15 @@ Gas is part of the same tradeoff. Measured with `pnpm test:bench` on `fhevm-tevm
 
 | Anonymity set size `N` | Continuous finalize | Batched finalize |
 | ---: | ---: | ---: |
-| 1 | 478,947 | 440,514 |
-| 2 | 565,928 | 484,625 |
-| 4 | 739,728 | 572,684 |
-| 8 | 1,087,164 | 748,638 |
-| 16 | 1,781,879 | 1,100,386 |
-| 32 | 3,171,172 | 1,803,729 |
-| 48 | 4,560,801 | 2,507,389 |
+| 1 | 478,967 | 528,136 |
+| 2 | 565,946 | 572,372 |
+| 4 | 739,742 | 660,681 |
+| 8 | 1,087,170 | 837,136 |
+| 16 | 1,781,869 | 1,189,883 |
+| 32 | 3,171,130 | 1,895,227 |
+| 48 | 4,560,727 | 2,600,886 |
 
-Batched is cheaper at every size. The gap is that continuous does more encrypted work per deposit. It rewrites each scanned deposit's amount in storage, where batched leaves the slot alone and keeps one encrypted `claimed` total per `(batch, recipient)`. That extra cost is the price of picking your own crowd, the same flexibility-versus-structure tradeoff in gas.
+Batched is cheaper from four deposits up. Below that, its per-batch ledger write, the encrypted `claimed` total and its ACL grants, costs more than the per-deposit work it saves. Above, the gap grows because continuous rewrites each scanned deposit's amount in storage, where batched leaves the slot alone and keeps one encrypted `claimed` total per `(batch, recipient)`. That extra cost is the price of picking your own crowd, the same flexibility-versus-structure tradeoff in gas.
 
 **Size these against your wrapper, not against this table.** The numbers above are measured against a bare mock wrapper, and `MAX_BATCH_LIMIT` / `MAX_MIN_DECOYS` bound the *adapter's* own FHE work. `finalizeWrap` also calls the wrapper, and whatever its `_update` costs comes out of the same per-transaction budget. An `ERC7984Hooked` wrapper with a few modules can add millions of HCU and push a full 48-slot scan over the limit. That cost isn't even fixed at deploy time. A hooked wrapper's admin can `installModule` *after* deposits are escrowed, and neither `maxBatchDeposits` nor `minDecoys` can be lowered in response. Deposits keep succeeding, and because finalize recomputes a recipient's `matched` sum over the whole batch you can't scan it in parts to get under budget. Calibrate against the target wrapper's post-module transfer cost, leave real headroom, and prefer a wrapper whose FHE cost can't change under you.
 
