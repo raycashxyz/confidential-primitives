@@ -241,7 +241,6 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
     function sealBatch(uint256 batchId) external nonReentrant {
         if (batchId != currentBatchId) revert NotCurrentBatch();
         Batch storage batch = _batches[batchId];
-        if (batch.closed) revert BatchAlreadyClosed();
         uint256 filled = batch.fillCount;
         if (filled == 0) revert NothingToSeal();
         if (!_sealDelayElapsed(batch)) revert SealDelayNotElapsed();
