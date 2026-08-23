@@ -32,16 +32,17 @@ export async function assertRevertsWith (promise: Promise<unknown>, errorName: s
  * That error lives in a host contract, not in ours, so viem cannot name it and surfaces the raw
  * 4-byte selector. Match on the selector instead.
  */
-export const SENDER_NOT_ALLOWED = toFunctionSelector("SenderNotAllowed(address)").toLowerCase();
+export const SENDER_NOT_ALLOWED = toFunctionSelector("SenderNotAllowed(address)");
 
 /** Assert a promise reverts with a specific 4-byte selector, for errors outside our own ABIs. */
 export async function assertRevertsWithSelector (promise: Promise<unknown>, selector: string): Promise<void> {
+  const expected = selector.toLowerCase();
   try {
     await promise;
   } catch (error) {
     const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-    if (message.includes(selector)) return;
-    throw new Error(`expected revert selector ${selector}, got: ${message}`);
+    if (message.includes(expected)) return;
+    throw new Error(`expected revert selector ${expected}, got: ${message}`);
   }
-  throw new Error(`expected revert selector ${selector} but the call succeeded`);
+  throw new Error(`expected revert selector ${expected} but the call succeeded`);
 }
