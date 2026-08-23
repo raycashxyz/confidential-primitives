@@ -16,7 +16,7 @@ interface IStealthWrapAdapter {
     error ZeroAddress();
     /// @dev Constructor configuration error: the confidential wrapper reports a zero wrap rate.
     error InvalidRate();
-    /// @dev Constructor configuration error: minDecoys must be non-zero.
+    /// @dev `minDecoys` is zero or above the largest scan one transaction can execute.
     error InvalidMinDecoys();
     /// @dev Runtime finalize error: the selected decoy set is smaller than minDecoys.
     error TooFewDecoys();

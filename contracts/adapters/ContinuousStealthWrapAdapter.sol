@@ -17,6 +17,11 @@ import {FHEUtils} from "../fhe/FHEUtils.sol";
  *         controls the decoy set quality; `minDecoys` only enforces a lower bound.
  */
 contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
+    /// @dev Hard cap on the decoy floor. `minDecoys` is a minimum every finalize must scan, so a
+    ///      floor above what one transaction can execute would strand every deposit. Fewer ids
+    ///      revert `TooFewDecoys`, more revert on the FHEVM budget, and `minDecoys` is immutable.
+    uint256 private constant MAX_MIN_DECOYS = 40;
+
     uint256 public immutable minDecoys;
 
     struct Deposit {
@@ -39,7 +44,7 @@ contract ContinuousStealthWrapAdapter is StealthWrapAdapter {
     constructor(IERC7984ERC20Wrapper confidentialWrapper_, uint256 _minDecoys)
         StealthWrapAdapter(confidentialWrapper_)
     {
-        if (_minDecoys == 0) revert InvalidMinDecoys();
+        if (_minDecoys == 0 || _minDecoys > MAX_MIN_DECOYS) revert InvalidMinDecoys();
         minDecoys = _minDecoys;
     }
 

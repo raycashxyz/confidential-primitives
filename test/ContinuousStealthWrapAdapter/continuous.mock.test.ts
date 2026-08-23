@@ -56,14 +56,14 @@ describe("ContinuousStealthWrapAdapter", () => {
     return receipt;
   };
 
-  const deployWrapper = () =>
+  const deployWrapper = (minDecoys: bigint = 2n) =>
     getOrDeployContinuousStealthWrapAdapter({
       walletClient: H.wallets.deployer,
       publicClient: H.publicClient,
       store: H.store,
       args: [
         confidentialWrapper.address,
-        2n
+        minDecoys
       ],
       force: true,
     });
@@ -92,6 +92,15 @@ describe("ContinuousStealthWrapAdapter", () => {
     if (handle === zeroHash) return 0n;
     return decryptEuint(H.fhevm.instance, handle, confidentialWrapper.address, owner);
   };
+
+  // minDecoys is a FLOOR every finalize must clear, so one set above the executable scan size
+  // leaves deposits that succeed and can never be finalized, and it is immutable.
+  it("rejects a decoy floor no finalize could ever satisfy", async () => {
+    await assertRevertsWith(deployWrapper(0n), "InvalidMinDecoys");
+    await assertRevertsWith(deployWrapper(41n), "InvalidMinDecoys");
+    const { contract } = await deployWrapper(40n);
+    expect(await contract.read.minDecoys()).toBe(40n);
+  });
 
   // Without a proof, FHE.fromExternal returns the handle verbatim and skips the Uint160 check, so
   // a wrong-type handle would land in `recipient` and make every finalize naming that slot revert
