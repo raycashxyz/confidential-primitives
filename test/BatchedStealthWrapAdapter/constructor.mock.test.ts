@@ -343,6 +343,37 @@ describe("BatchedStealthWrapAdapter", () => {
       expect(await underlying18.read.balanceOf([confidentialWrapper18.address])).toBe(rate);
     });
 
+    // An event-only indexer replays logs in order, so a BatchSealed ahead of the deposit that
+    // caused it reads as "batch closed with one fewer deposit than it holds".
+    it("emits WrapInitiated before BatchSealed on the deposit that fills the batch", async () => {
+      const {
+        wallets, deployWrapper, fundAndApprove, initWrap
+      } = await boot();
+      const { alice } = wallets;
+      const { contract: wrapper } = await deployWrapper(2n);
+
+      await fundAndApprove(wrapper, alice, 2n);
+      await initWrap(wrapper, alice, alice.account.address);
+      const receipt = await initWrap(wrapper, alice, alice.account.address); // fills the batch
+
+      const ordered = receipt.logs
+        .filter((log) => log.address.toLowerCase() === wrapper.address.toLowerCase())
+        .map((log) => {
+          try {
+            return decodeEventLog({
+              abi: wrapper.abi,
+              data: log.data,
+              topics: log.topics
+            }).eventName;
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((name) => name === "WrapInitiated" || name === "BatchSealed");
+
+      expect(ordered).toEqual(["WrapInitiated", "BatchSealed"]);
+    });
+
     it("pulls underlying, records the deposit, and auto-closes a full batch", async () => {
       const {
         wallets, underlying, confidentialWrapper, deployWrapper, fundAndApprove, initWrap

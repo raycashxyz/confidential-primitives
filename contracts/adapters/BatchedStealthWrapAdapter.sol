@@ -203,9 +203,10 @@ contract BatchedStealthWrapAdapter is StealthWrapAdapter {
         batch.lastDepositAt = uint64(block.timestamp);
         totalDeposits += 1;
 
-        if (batch.fillCount == maxBatchDeposits) _closeBatchUnchecked(batchId, batch);
-
+        // Emit before the close so log order matches the lifecycle.
         emit WrapInitiated(batchId, slot, depositor, wrappedUnderlying, FHE.toBytes32(verifiedRecipient));
+
+        if (batch.fillCount == maxBatchDeposits) _closeBatchUnchecked(batchId, batch);
     }
 
     // -----------------------------------------------------------------------
