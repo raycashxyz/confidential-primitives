@@ -160,7 +160,6 @@ describe("RecurringAllowance: periods and security regressions", () => {
     await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
-      0n,
       permissionId,
       handle,
       inputProof,
@@ -210,7 +209,6 @@ describe("RecurringAllowance: periods and security regressions", () => {
     await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
-      0n,
       permissionId,
       zeroHash,
       "0x",

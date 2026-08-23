@@ -113,11 +113,13 @@ interface IRecurringAllowance {
     error InvalidSpenderAddress();
     /// @dev The (effective) end time is in the past or not after the start time.
     error InvalidEndTime();
-    /// @dev No permission exists at `permissionIndex` for the given key.
-    error PermissionNotFound(uint256 permissionIndex);
-    /// @dev The permission at the given index does not carry the given id (the array
-    ///      was reordered since the caller read it — re-read and retry).
-    error PermissionMismatch(uint256 permissionId);
+    /// @dev The (user, token, spender) key has no permission with this stable id.
+    error PermissionNotFound(uint256 permissionId);
+    /// @dev `permissionIndex` is past the end of the key's permission array. Indices are not stable
+    ///      across writes (swap-and-pop), so re-read before indexing, or address by id instead.
+    error PermissionIndexOutOfRange(uint256 permissionIndex);
+    /// @dev `pairIndex` is past the end of the user's granted-pair enumeration.
+    error GrantedPairIndexOutOfRange(uint256 pairIndex);
     /// @dev The (user, token, spender) key has no active permission to spend against.
     error NoPermissions();
     /// @dev Adding one more permission would exceed {RecurringAllowance-MAX_PERMISSIONS}.
@@ -229,13 +231,12 @@ interface IRecurringAllowance {
         uint64 endTime
     ) external returns (uint256 permissionId);
 
-    /// @notice Modify an existing permission of the caller, addressed by (index, id).
+    /// @notice Modify an existing permission of the caller, addressed by its stable `permissionId`.
     ///         Zero-valued time fields and an empty `inputProof` mean "leave unchanged";
     ///         changing the grid (`duration`/`startTime`) resets `spent`.
     function updatePermission(
         address token,
         address spender,
-        uint256 permissionIndex,
         uint256 permissionId,
         externalEuint64 limit,
         bytes calldata inputProof,
@@ -244,13 +245,8 @@ interface IRecurringAllowance {
         uint64 endTime
     ) external;
 
-    /// @notice Revoke one of the caller's permissions, addressed by (index, id).
-    function invalidatePermission(
-        address token,
-        address spender,
-        uint256 permissionIndex,
-        uint256 permissionId
-    ) external;
+    /// @notice Revoke one of the caller's permissions, addressed by its stable `permissionId`.
+    function invalidatePermission(address token, address spender, uint256 permissionId) external;
 
     /// @notice Revoke every stored permission for each given (token, spender) pair.
     function lockdown(TokenSpenderPair[] calldata pairs) external;

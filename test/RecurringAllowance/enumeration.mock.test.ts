@@ -3,11 +3,9 @@ import { getAddress, parseEventLogs } from "viem";
 
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts } from "../setup/tx";
-import { useAllowanceSuite } from "./setup/suite";
-
-/** SkipReason enum mirror (contract: NONE=0, NO_PERMISSIONS=1, TOKEN_CALL_FAILED=2). */
-const SKIP_NO_PERMISSIONS = 1;
-const SKIP_TOKEN_CALL_FAILED = 2;
+import {
+  SKIP_NO_PERMISSIONS, SKIP_TOKEN_CALL_FAILED, useAllowanceSuite
+} from "./setup/suite";
 
 describe("RecurringAllowance: grant enumeration and lenient batch", () => {
   const S = useAllowanceSuite();
@@ -47,7 +45,6 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idA
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(2n);
@@ -56,7 +53,6 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idB
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(1n);
@@ -84,7 +80,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     // getGrantedPairAt reverts cleanly (not a bare panic) past the end.
     await assertRevertsWith(
       allowance.read.getGrantedPairAt([user, 1n]),
-      "PermissionNotFound",
+      "GrantedPairIndexOutOfRange",
     );
   });
 

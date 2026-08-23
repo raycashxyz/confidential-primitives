@@ -269,13 +269,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
      *      so a wallet echoing back a full record can't silently refresh the budget.
      *      Changing only `limit` keeps the current period's `spent`: lowering the limit
      *      below what is already spent simply blocks further spending until the next reset.
-     *      The permission is addressed by (index, id): indices move under swap-and-pop,
-     *      so the id guard makes a stale index revert instead of hitting a neighbour.
+     *      The permission is addressed by its stable `permissionId` (see {_findPermission}).
      */
     function updatePermission(
         address token,
         address spender,
-        uint256 permissionIndex,
         uint256 permissionId,
         externalEuint64 limit,
         bytes calldata inputProof,
@@ -284,9 +282,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint64 endTime
     ) external {
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
-        if (permissionIndex >= permissions.length) revert PermissionNotFound(permissionIndex);
-        Permission storage permission = permissions[permissionIndex];
-        if (permission.id != permissionId) revert PermissionMismatch(permissionId);
+        Permission storage permission = permissions[_findPermission(permissions, permissionId)];
 
         if (inputProof.length > 0) {
             euint64 eLimit = FHEUtils.fromExternalForThis(limit, inputProof, msg.sender);
@@ -337,17 +333,11 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
 
     /**
      * @notice Revoke a single permission, leaving the key's other permissions intact.
-     * @dev Swap-and-pop removal; addressed by (index, id) like {updatePermission}.
+     * @dev Swap-and-pop removal, addressed by its stable `permissionId` like {updatePermission}.
      */
-    function invalidatePermission(
-        address token,
-        address spender,
-        uint256 permissionIndex,
-        uint256 permissionId
-    ) external {
+    function invalidatePermission(address token, address spender, uint256 permissionId) external {
         Permission[] storage permissions = _permissions[msg.sender][token][spender];
-        if (permissionIndex >= permissions.length) revert PermissionNotFound(permissionIndex);
-        if (permissions[permissionIndex].id != permissionId) revert PermissionMismatch(permissionId);
+        uint256 permissionIndex = _findPermission(permissions, permissionId);
 
         uint256 lastIndex = permissions.length - 1;
         if (permissionIndex != lastIndex) permissions[permissionIndex] = permissions[lastIndex];
@@ -514,7 +504,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         uint256 permissionIndex
     ) external view returns (Permission memory) {
         Permission[] storage permissions = _permissions[user][token][spender];
-        if (permissionIndex >= permissions.length) revert PermissionNotFound(permissionIndex);
+        if (permissionIndex >= permissions.length) revert PermissionIndexOutOfRange(permissionIndex);
         return permissions[permissionIndex];
     }
 
@@ -543,7 +533,7 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
     }
 
     function getGrantedPairAt(address user, uint256 index) external view returns (TokenSpenderPair memory) {
-        if (index >= _grantedPairs[user].length) revert PermissionNotFound(index);
+        if (index >= _grantedPairs[user].length) revert GrantedPairIndexOutOfRange(index);
         return _grantedPairs[user][index];
     }
 
@@ -767,6 +757,26 @@ contract RecurringAllowance is IRecurringAllowance, ZamaEthereumConfig, Reentran
         if (!SignatureChecker.isValidSignatureNowCalldata(owner, _hashTypedDataV4(structHash), signature)) {
             revert InvalidSigner();
         }
+    }
+
+    /**
+     * @dev Resolve a permission by its stable id. Owner-facing writes address permissions this way
+     *      because a spender can move array indices. {_evaluatePermissions} swap-and-pops expired
+     *      entries, and a spender reaches that prune with a `tryTransferFrom` carrying an encrypted
+     *      zero, so one watching the mempool could front-run an owner's revocation and make it
+     *      revert on a stale index. Ids travel with the permission through the swap, and the scan is
+     *      bounded by `MAX_PERMISSIONS`.
+     */
+    function _findPermission(
+        Permission[] storage permissions,
+        uint256 permissionId
+    ) private view returns (uint256) {
+        uint256 len = permissions.length;
+        for (uint256 i = 0; i < len; ) {
+            if (permissions[i].id == permissionId) return i;
+            unchecked { ++i; }
+        }
+        revert PermissionNotFound(permissionId);
     }
 
     /// @dev Add (token, spender) to `user`'s granted-pair enumeration if absent.
