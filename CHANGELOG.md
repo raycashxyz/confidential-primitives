@@ -1,5 +1,92 @@
 # @raycashxyz/confidential-primitives
 
+## 0.6.0
+
+### Minor Changes
+
+- 788a770: Adds `RecurringAllowance.activePermissionCount(user, token, spender)`, the number of permissions a
+  spend would evaluate, for sizing batches against the FHEVM per-transaction budget.
+- ef258a5: **Breaking:** `BatchedStealthWrapAdapter` deposit slots are dense. A deposit takes slot
+  `getDepositsLength()`, so `[0, getDepositsLength())` enumerates every deposit and the redundant
+  `totalDeposits()` is removed.
+- bf95460: **Breaking:** `BatchedStealthWrapAdapter.finalizeWrap` is retry-safe. Each batch keeps an encrypted
+  per-recipient `claimed` total; a finalize pays `matched - claimed` and credits back what the wrapper
+  reports it moved, clamped to what was owed. A transfer that moves zero or part leaves the exact
+  remainder claimable, and a repeat finalize pays an encrypted zero instead of reverting.
+  `AlreadyFinalized` and the `finalized(batchId, recipient)` view are replaced by
+  `claimedAmount(batchId, recipient)`, and `WrapFinalized` is emitted once per batch; the recipient
+  can decrypt both the claimed total and the reported amount. This lifts the exact-or-revert wrapper
+  requirement from the batched finalize path.
+- 6f80b89: **Breaking:** the batched seal deadline is anchored to a batch's first deposit instead of its last,
+  so later deposits cannot push it out. Adds `batchOpenedAt`; removes `batchLastDepositAt`.
+- 822cc84: New `FHEUtils` library extending `@fhevm/solidity` for contracts that handle ciphertexts they did
+  not create. `fromExternalForThis` imports a caller-supplied ciphertext and grants ACL access to the
+  importing contract only, with an overload for every type `FHE.fromExternal` supports, passes the
+  expected type to the coprocessor, and reverts `MissingInputProof` on an empty proof. `isAuthorizedOn`
+  checks a handle an untrusted contract returns, taking the raw `bytes32` so one function covers every
+  type. `isFreshForThis` reads the ACL to tell whether the contract has accepted a handle before. `sum`
+  tree-reduces an array within the FHEVM depth budget. Both shipped contracts import every external
+  ciphertext through it, and the package publishes `contracts/fhe`.
+- ed0d72d: **Breaking:** `initWrap` takes a fourth parameter, `bytes calldata extraData`, so implementations
+  can accept options without new entrypoints. Empty selects the default behaviour and malformed
+  options revert `InvalidExtraData`. `BatchedStealthWrapAdapter` reads
+  `abi.encode(uint256 expectedBatchId)` to pin the deposit to the batch the depositor inspected,
+  reverting `NotCurrentBatch` without moving funds if it would land elsewhere.
+  `ContinuousStealthWrapAdapter` accepts only empty.
+- ea8d59e: `ContinuousStealthWrapAdapter` rejects `minDecoys` above 40 at deployment. The floor is immutable
+  and every finalize must clear it, so a value above what one transaction can execute would leave
+  deposits that can never be finalized.
+- 6aa97cf: **Breaking:** `updatePermission` and `invalidatePermission` address a permission by its stable
+  `permissionId` alone. Array indices shift under the owner, so the index parameter and
+  `PermissionMismatch` are gone. `PermissionNotFound(permissionId)` now means what it says, with
+  `PermissionIndexOutOfRange` and `GrantedPairIndexOutOfRange` covering the view lookups.
+- 4500740: `RecurringAllowance` rejects a token-returned handle the token is not ACL-authorized on, reverting
+  `InvalidReturnedHandle` on every spend path. Handles are global, so a caller-supplied token could
+  otherwise return someone else's stored ciphertext and have it folded into state the caller can
+  decrypt.
+- 251407b: Encrypted-recipient handles are single-use per adapter. A reused handle publicly links its deposits,
+  so a replay reverts `RecipientHandleAlreadyUsed`, while a fresh encryption of the same address is a
+  new handle. `recipientHandleUsed(bytes32)` exposes the state, and an adapter whose deposit path
+  already links deposits can omit the check in its own `initWrap`. The record is the adapter's own
+  persistent ACL grant on the stored handle, with no extra storage.
+- 8bb00ad: `updatePermission` no longer resets `spent` on a `duration`/`startTime` change. The value carries
+  into the first period of the new grid and clears at that grid's next boundary, so a grid change
+  never releases budget. Owners who want a fresh budget revoke and re-grant.
+
+### Patch Changes
+
+- 57c51b9: `WrapInitiated` is emitted before `BatchSealed` when a deposit fills a batch, so log order matches
+  the lifecycle.
+- 822cc84: `permitTransferFrom` no longer grants the spender ACL access to the signed cheque cap, so a contract
+  spender cannot persist the grant and decrypt the owner's ceiling.
+- 60cf116: Docs:
+
+  - the wrapper must be exact-or-revert on `wrap`, and on `confidentialTransfer` where the adapter's
+    finalize path is not retry-safe
+  - wrapper-level transfer restrictions see the adapter as the counterparty, not the depositor
+  - verify a payment request really comes from the payee. The recipient address is encrypted by the
+    payee and the depositor cannot decrypt it to check where the funds go
+  - unwrapping the exact amount received reveals which deposits paid you
+  - size `maxBatchDeposits` and `minDecoys` against the target wrapper's transfer cost
+  - a cheque moves the requested amount or an encrypted zero; a successful submission consumes its
+    nonce, a reverting token call rolls it back
+  - `endTime` expiry is inclusive
+  - `tryTransferFrom`'s permission maintenance, pruning and period resets, persists on a skipped item
+  - a README Compatibility section states the Zama FHEVM requirements
+
+- 822cc84: A deposit no longer grants the depositor transient ACL access to the encrypted recipient, so a
+  contract depositor cannot escalate that grant and decrypt the recipient it deposited for.
+- a594fe7: `_recordBatchedDeposit` reverts `BatchAlreadyClosed` when the current batch is closed instead of
+  recovering. The recovery was unreachable and would have put the deposit into a closed batch.
+- 8036590: `_recordBatchedDeposit` persists ACL access to the stored `eAmount`, so a derived adapter holding
+  only transient authorization cannot record a deposit that finalize could never use.
+- 6d4268c: `BatchedStealthWrapAdapter.finalizeWrap` rejects an empty `ids` array with `InvalidId` instead of
+  transferring an encrypted zero to an arbitrary address.
+- 3b739cf: `ContinuousStealthWrapAdapter.finalizeWrap` compares recipients with the scalar `FHE.eq`, cutting
+  20,000 HCU per scanned slot and raising the maximum executable decoy set.
+- 5318d5e: `updatePermission` validates the time window before importing a replacement limit, so an invalid
+  window reverts without paying for proof verification.
+
 ## 0.5.0
 
 ### Minor Changes
