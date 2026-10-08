@@ -3,11 +3,9 @@ import { getAddress, parseEventLogs } from "viem";
 
 import { assertRevertsWith } from "../setup/asserts";
 import { fheTxOpts } from "../setup/tx";
-import { useAllowanceSuite } from "./setup/suite";
-
-/** SkipReason enum mirror (contract: NONE=0, NO_PERMISSIONS=1, TOKEN_CALL_FAILED=2). */
-const SKIP_NO_PERMISSIONS = 1;
-const SKIP_TOKEN_CALL_FAILED = 2;
+import {
+  SKIP_NO_PERMISSIONS, SKIP_TOKEN_CALL_FAILED, useAllowanceSuite
+} from "./setup/suite";
 
 describe("RecurringAllowance: grant enumeration and lenient batch", () => {
   const S = useAllowanceSuite();
@@ -47,7 +45,6 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idA
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(2n);
@@ -56,14 +53,13 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idB
     ], fheTxOpts(alice.account)));
     expect(await allowance.read.getGrantedPairCount([user])).toBe(1n);
     const remaining = await allowance.read.getGrantedPairAt([user, 0n]);
     expect(getAddress(remaining.spender)).toBe(getAddress(carol.account.address));
 
-    // Lockdown unlists too; re-granting lists again.
+    // Lockdown unlists too. Re-granting lists again.
     await S.sendOk(allowance.write.lockdown([
       [
         {
@@ -84,8 +80,42 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
     // getGrantedPairAt reverts cleanly (not a bare panic) past the end.
     await assertRevertsWith(
       allowance.read.getGrantedPairAt([user, 1n]),
-      "PermissionNotFound",
+      "GrantedPairIndexOutOfRange",
     );
+  });
+
+  // Batch cost is the sum over items and one payer's tiers move the ceiling for everyone else, so
+  // processors need the count a spend would evaluate, not the stored count.
+  it("counts only the permissions a spend would evaluate", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+    const nowTs = await S.now();
+
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 100n
+    });
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 200n,
+      startTime: nowTs + 5000n // not started
+    });
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 300n,
+      endTime: nowTs + 100n // expires shortly
+    });
+
+    const key = [alice.account.address, token.address, bob.account.address] as const;
+    expect(await allowance.read.getPermissionCount(key)).toBe(3n);
+    expect(await allowance.read.activePermissionCount(key)).toBe(2n); // the future-dated one is out
+
+    await H.warpTime(200n);
+    expect(await allowance.read.getPermissionCount(key)).toBe(3n); // pruning needs a write
+    expect(await allowance.read.activePermissionCount(key)).toBe(1n); // expired one drops out too
   });
 
   it("unlists a pair whose only permission expired and got pruned by a lenient spend", async () => {
@@ -187,7 +217,7 @@ describe("RecurringAllowance: grant enumeration and lenient batch", () => {
       alice, bob, carol, signer: dave
     } = H.wallets;
 
-    // alice fully set up; dave granted a permission but NEVER set the operator.
+    // alice fully set up. Dave granted a permission but NEVER set the operator.
     await S.fundUser(alice, 10_000n);
     await S.setPermission({
       user: alice,

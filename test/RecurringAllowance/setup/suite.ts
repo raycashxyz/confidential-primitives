@@ -1,10 +1,10 @@
 /**
  * Shared harness + helpers for the RecurringAllowance suites.
  *
- * Same shape as the BatchedStealthWrapAdapter suite: each *.mock.test.ts file calls
- * `useAllowanceSuite()` once at the top level; it registers the per-file
- * `beforeAll`/`beforeEach` (one FHEVM env with MockConfidentialToken + RecurringAllowance
- * deployed and snapshotted, restored each test) and returns the bound helpers.
+ * Same shape as the BatchedStealthWrapAdapter suite. Each *.mock.test.ts file calls
+ * `useAllowanceSuite()` once at the top level. It registers the per-file
+ * `beforeAll`/`beforeEach`, one FHEVM env with MockConfidentialToken + RecurringAllowance
+ * deployed and snapshotted then restored each test, and returns the bound helpers.
  */
 import { beforeAll, beforeEach } from "vitest";
 import { parseEventLogs, zeroHash } from "viem";
@@ -23,6 +23,11 @@ export const WEEK = 7n * DAY;
 export const MONTH = 30n * DAY;
 export const YEAR = 365n * DAY;
 export const MAX_UINT64 = 2n ** 64n - 1n;
+
+/** Mirror of the contract's `SkipReason` enum. Keep in step with {IRecurringAllowance}. */
+export const SKIP_NONE = 0;
+export const SKIP_NO_PERMISSIONS = 1;
+export const SKIP_TOKEN_CALL_FAILED = 2;
 
 export type TokenContract = Awaited<ReturnType<typeof getOrDeployMockConfidentialToken>>["contract"];
 export type AllowanceContract = Awaited<ReturnType<typeof getOrDeployRecurringAllowance>>["contract"];
@@ -135,12 +140,12 @@ export function useAllowanceSuite () {
 
   /** Make the RecurringAllowance contract an ERC-7984 operator for `who` (~100y). */
   const approveOperator = async (who: WalletWithAccount) => {
-    // ERC-7984 `until` is uint48 — viem types it as `number`.
+    // ERC-7984 `until` is uint48. viem types it as `number`.
     const until = Number(await now()) + 3_153_600_000;
     await sendOk(token.write.setOperator([allowance.address, until], txOpts(who.account)));
   };
 
-  /** Mint + operator in one go — the standard per-test user setup. */
+  /** Mint + operator in one go, the standard per-test user setup. */
   const fundUser = async (who: WalletWithAccount, amount: bigint) => {
     await mintTo(who, amount);
     await approveOperator(who);
@@ -170,7 +175,7 @@ export function useAllowanceSuite () {
     };
   };
 
-  /** Spend via transferFrom; resolves to the receipt (reverts throw). */
+  /** Spend via transferFrom. Resolves to the receipt, and reverts throw. */
   const spend = async (p: SpendParams) => {
     const { handle, inputProof } = await encAmount(allowance.address, p.spender.account.address, p.amount);
     return sendOk(allowance.write.transferFrom([
@@ -182,7 +187,7 @@ export function useAllowanceSuite () {
     ], fheTxOpts(p.spender.account)));
   };
 
-  /** Spend WITHOUT an explicit gas limit — use with assertRevertsWith so viem simulates. */
+  /** Spend WITHOUT an explicit gas limit. Use with assertRevertsWith so viem simulates. */
   const spendExpectingRevert = async (p: SpendParams) => {
     const { handle, inputProof } = await encAmount(allowance.address, p.spender.account.address, p.amount);
     return allowance.write.transferFrom([

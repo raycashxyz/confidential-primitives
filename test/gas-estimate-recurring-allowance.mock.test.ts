@@ -2,14 +2,14 @@
  * Gas benchmark for RecurringAllowance.transferFrom as the number of active
  * permissions on the (user, token, spender) key grows.
  *
- * Also verifies the obliviousness claim in gas: a denied spend (over-limit) runs the
+ * Also verifies the obliviousness claim in gas. A denied spend (over-limit) runs the
  * exact same FHE op sequence as a permitted one, so their gas is identical on a real
- * FHEVM (on-chain execution is symbolic; gas depends only on the derivation shape).
+ * FHEVM, since on-chain execution is symbolic and gas depends only on the derivation shape.
  * Each variant is measured in its own freshly booted environment at the same tx
  * position. NOTE the tevm mock adds run-to-run bookkeeping variance of up to
- * ~2.8k gas per permission (its content-addressed ciphertext DB warms/colds a few
- * ACL and depth-tracker writes depending on the random ciphertext values), so the
- * assertion uses a 2% tolerance; matched runs come out exactly equal (+-12 gas).
+ * ~2.8k gas per permission, since its content-addressed ciphertext DB warms/colds a few
+ * ACL and depth-tracker writes depending on the random ciphertext values, so the
+ * assertion uses a 2% tolerance. Matched runs come out exactly equal (+-12 gas).
  *
  * Analytic HCU uses the per-op costs from @fhevm/host-contracts HCULimit.sol
  * (euint64, cipher-cipher): le 149k, sub/add 162k, and(ebool) 25k, select 55k.
@@ -72,7 +72,7 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
   it("measures permitted and denied spends and reports analytic HCU", async () => {
     /**
      * Boot a fresh env, set up `n` permissions, run one permitted warm-up spend, then
-     * measure the gas of a single spend of `amount` — always the second spend, so the
+     * measure the gas of a single spend of `amount`, always the second spend, so the
      * permitted and denied variants are position-identical.
      */
     const measureSpend = async (n: number, amount: bigint): Promise<bigint | null> => {
@@ -129,7 +129,7 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
           inputProof
         ], fheTxOpts(alice.account)), "mint");
         const { timestamp } = await publicClient.getBlock({ blockTag: "latest" });
-        // ERC-7984 `until` is uint48 — viem types it as `number`.
+        // ERC-7984 `until` is uint48. viem types it as `number`.
         await sendOk(
           token.write.setOperator([allowance.address, Number(timestamp) + 3_153_600_000], fheTxOpts(alice.account)),
           "setOperator",
@@ -184,7 +184,7 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
     const g = (v: bigint | null) => (v === null ? "REVERT" : v.toLocaleString()).padStart(13);
     const h = (v: number) => v.toLocaleString().padStart(13);
 
-    console.log("\n  MEASURED EVM gas — transferFrom with N active permissions on the key");
+    console.log("\n  MEASURED EVM gas: transferFrom with N active permissions on the key");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ permitted     │ denied        │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -193,7 +193,7 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
-    console.log("\n  ANALYTIC HCU — total (cap 20,000,000/tx) and depth (cap 5,000,000/tx)");
+    console.log("\n  ANALYTIC HCU: total (cap 20,000,000/tx) and depth (cap 5,000,000/tx)");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ total         │ depth         │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -205,8 +205,8 @@ describe("Gas Estimation (RecurringAllowance.transferFrom vs active permission c
     for (const r of results) {
       expect(r.permitted, `permitted spend gas @${r.n}`).not.toBeNull();
       expect(r.denied, `denied spend gas @${r.n}`).not.toBeNull();
-      // Obliviousness in gas: identical op sequence either way. The tolerance absorbs
-      // the mock's run-to-run bookkeeping variance (see the header note) — matched
+      // Obliviousness in gas, identical op sequence either way. The tolerance absorbs
+      // the mock's run-to-run bookkeeping variance (see the header note), matched
       // runs measure exactly equal.
       const drift = Number((r.permitted! > r.denied! ? r.permitted! - r.denied! : r.denied! - r.permitted!)) /
         Number(r.permitted!);

@@ -1,7 +1,7 @@
 /**
- * BatchedStealthWrapAdapter — multi-batch finalize + the scale headline: the tree reduction
- * clears a full batch of 32. Isolated in its own file
- * (the 32-deposit case is the slowest test in the suite) so it runs on its own worker.
+ * BatchedStealthWrapAdapter: multi-batch finalize + the scale headline, that the tree reduction
+ * clears a full batch of 32. Isolated in its own file,
+ * since the 32-deposit case is the slowest test in the suite, so it runs on its own worker.
  */
 import {
   describe, it, expect
@@ -13,7 +13,7 @@ import { assertRevertsWith } from "../setup/asserts";
 
 const boot = useBatchedSuite();
 
-describe("BatchedStealthWrapAdapter finalizeWrap — multi-batch & scale", () => {
+describe("BatchedStealthWrapAdapter finalizeWrap: multi-batch & scale", () => {
   it("finalizes multiple closed batches in one call", async () => {
     const {
       wallets, deployWrapper, fundAndApprove, initWrap, decryptBalance, send
@@ -49,7 +49,7 @@ describe("BatchedStealthWrapAdapter finalizeWrap — multi-batch & scale", () =>
     );
   });
 
-  // The headline: tree reduction keeps the add dependency depth logarithmic, so a
+  // The headline is that tree reduction keeps the add dependency depth logarithmic, so a
   // full 32-slot batch clears in one call.
   it("finalizes a batch of 32 with tree reduction", async () => {
     const {

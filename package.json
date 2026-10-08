@@ -19,6 +19,7 @@
   ],
   "files": [
     "contracts/adapters/**/*.sol",
+    "contracts/fhe/**/*.sol",
     "contracts/allowances/**/*.sol",
     "contracts/interfaces/**/*.sol",
     "LICENSE",

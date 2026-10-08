@@ -12,3 +12,8 @@ src/deployers/
 .env.*
 *.log
 .DS_Store
+
+# agent tooling (local)
+.claude/
+.agents/
+skills-lock.json

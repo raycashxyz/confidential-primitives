@@ -31,10 +31,8 @@ const AMOUNT = 100n;
 
 const OP = {
   EQ_ADDR_SCALAR: 117_000,
-  EQ_ADDR_CIPHER: 137_000,
   SELECT_U64: 55_000,
-  ADD_U64: 162_000,
-  TRIVIAL: 32
+  ADD_U64: 162_000
 };
 const DEPTH_CAP = 5_000_000;
 const TOTAL_CAP = 20_000_000;
@@ -51,13 +49,15 @@ const ceilLog2 = (n: number): number => {
 
 const treeAdds = (n: number) => Math.max(0, n - 1);
 
+// Both adapters compare against the CLEARTEXT recipient (scalar overload). Continuous pays a
+// second select per slot on top, to zero the matched deposit's stored amount.
 const hcuTotal = {
-  continuous: (n: number) => OP.TRIVIAL + n * (OP.EQ_ADDR_CIPHER + 2 * OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64,
+  continuous: (n: number) => n * (OP.EQ_ADDR_SCALAR + 2 * OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64,
   batched: (n: number) => n * (OP.EQ_ADDR_SCALAR + OP.SELECT_U64) + treeAdds(n) * OP.ADD_U64
 };
 
 const hcuDepth = {
-  continuous: (n: number) => OP.EQ_ADDR_CIPHER + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64,
+  continuous: (n: number) => OP.EQ_ADDR_SCALAR + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64,
   batched: (n: number) => OP.EQ_ADDR_SCALAR + OP.SELECT_U64 + ceilLog2(n) * OP.ADD_U64
 };
 
@@ -138,7 +138,8 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
           await sendOk(contract.write.initWrap([
             AMOUNT,
             handle,
-            inputProof
+            inputProof,
+            "0x"
           ], fheTxOpts(alice.account)), `continuous initWrap #${i}`);
         }
 
@@ -164,7 +165,8 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
           await sendOk(contract.write.initWrap([
             AMOUNT,
             handle,
-            inputProof
+            inputProof,
+            "0x"
           ], fheTxOpts(alice.account)), `batched initWrap #${i}`);
         }
 
@@ -204,7 +206,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     const h = (v: number) => v.toLocaleString().padStart(13);
     const capped = (v: number, cap: number) => (v >= cap ? `${v.toLocaleString()} X` : v.toLocaleString()).padStart(15);
 
-    console.log("\n  MEASURED EVM gas — finalize all N deposits to one recipient");
+    console.log("\n  MEASURED EVM gas: finalize all N deposits to one recipient");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -213,7 +215,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
-    console.log("\n  ANALYTIC total HCU (cap 20,000,000/tx) — finalize only, HCULimit op costs");
+    console.log("\n  ANALYTIC total HCU (cap 20,000,000/tx): finalize only, HCULimit op costs");
     console.log("  ┌────────┬───────────────┬───────────────┐");
     console.log("  │ N      │ continuous    │ batched       │");
     console.log("  ├────────┼───────────────┼───────────────┤");
@@ -222,7 +224,7 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     }
     console.log("  └────────┴───────────────┴───────────────┘");
 
-    console.log("\n  ANALYTIC HCU DEPTH (cap 5,000,000/tx; X = over cap) — finalize critical path");
+    console.log("\n  ANALYTIC HCU DEPTH (cap 5,000,000/tx; X = over cap): finalize critical path");
     console.log("  ┌────────┬─────────────────┬─────────────────┐");
     console.log("  │ N      │ continuous      │ batched         │");
     console.log("  ├────────┼─────────────────┼─────────────────┤");
@@ -231,10 +233,10 @@ describe("Gas Estimation (continuous vs batched stealth wrap adapters)", () => {
     }
     console.log("  └────────┴─────────────────┴─────────────────┘\n");
 
+    // Continuous used to drop out above 32 because it trivially encrypted the public recipient and
+    // took the ciphertext-ciphertext eq. On the scalar overload it clears every measured size.
     for (const r of results) {
-      if (r.n <= 32) {
-        expect(r.continuousFinalize, `continuous finalize gas @${r.n}`).not.toBeNull();
-      }
+      expect(r.continuousFinalize, `continuous finalize gas @${r.n}`).not.toBeNull();
       expect(r.batchedFinalize, `batched finalize gas @${r.n}`).not.toBeNull();
     }
     expect(hcuDepth.continuous(48)).toBeLessThan(DEPTH_CAP);

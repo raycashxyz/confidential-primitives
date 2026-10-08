@@ -1,31 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {FHE, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, euint64, eaddress, externalEaddress} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/interfaces/IERC7984ERC20Wrapper.sol";
 import {IStealthWrapAdapter} from "../../interfaces/IStealthWrapAdapter.sol";
+import {FHEUtils} from "../../fhe/FHEUtils.sol";
 
 /**
  * @title StealthWrapAdapter
  * @author Valerio Leo (@valeriohq)
  * @author Pavlos Polianidis (@ppoliani)
- * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper.
- *
- *         This contract does not implement an ERC7984 token. It escrows confidential
- *         balances of `CONFIDENTIAL_WRAPPER`: initWrap pulls clear ERC20 from the
- *         depositor, wraps it into confidential balance owned by this contract, and
- *         records an encrypted recipient. finalizeWrap variants homomorphically select
- *         matching deposits and transfer the resulting confidential balance to the
- *         cleartext recipient.
- *
- *         REENTRANCY: {_wrapIntoEscrow} and {_transferWrapped} make external calls
- *         (safeTransferFrom / wrap / confidentialTransfer) BEFORE the caller records its own
- *         state (deposit entries, nullifiers). Implementations MUST therefore guard their public
- *         {initWrap} and {finalizeWrap} with `nonReentrant`, as the bundled adapters do.
+ * @notice Abstract base for stealth wrap adapters over an existing ERC7984ERC20Wrapper. A deposit
+ *         pulls clear ERC-20 from the depositor, wraps it into confidential balance held by this
+ *         contract and records an encrypted recipient. {finalizeWrap} homomorphically selects the
+ *         deposits matching a cleartext recipient and transfers their encrypted sum.
  */
 abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -39,8 +31,7 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         address underlying_ = confidentialWrapper_.underlying();
         if (underlying_ == address(0)) revert ZeroAddress();
 
-        // rate() is the wrap divisor used in _wrapIntoEscrow (`amount % rate`); a zero rate
-        // would panic on every deposit. A valid OZ ERC7984ERC20Wrapper never returns 0.
+        // `rate()` divides every deposit in {_wrapIntoEscrow}. Zero would panic on each one.
         if (confidentialWrapper_.rate() == 0) revert InvalidRate();
 
         CONFIDENTIAL_WRAPPER = confidentialWrapper_;
@@ -61,8 +52,32 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         return CONFIDENTIAL_WRAPPER.rate();
     }
 
-    /// @dev External calls (safeTransferFrom / wrap) run before the caller records its deposit,
-    ///      so callers MUST be `nonReentrant` (see the contract-level REENTRANCY note).
+    /// @notice Whether an encrypted-recipient handle has already funded a deposit here.
+    function recipientHandleUsed(bytes32 handle) external view returns (bool) {
+        return !FHEUtils.isFreshForThis(handle);
+    }
+
+    /**
+     * @dev Import a depositor-submitted encrypted recipient. Every deposit path must import through
+     *      here. The import grants this adapter transient access only. Persist it with
+     *      `FHE.allowThis` where the handle is stored, which is also what marks it used for
+     *      {recipientHandleUsed}.
+     */
+    function _verifyRecipient(externalEaddress eRecipient, bytes calldata inputProof) internal returns (eaddress) {
+        return FHEUtils.fromExternalForThis(eRecipient, inputProof, msg.sender);
+    }
+
+    /**
+     * @dev Pull `amount` underlying from `depositor`, rounded down to the wrapper's rate, and wrap
+     *      it into confidential balance held by this adapter. Call it only from a `nonReentrant`
+     *      entrypoint, since it calls out before the caller records the deposit. The wrapper must be
+     *      exact-or-revert on `wrap`. A short wrap would leave the underlying with the wrapper and a
+     *      zero-valued deposit here. The adapter is the wrapper's counterparty. A wrapper that gates
+     *      `wrap` on its caller or recipient sees this adapter, not the depositor, so such checks
+     *      belong on the adapter's deposit path instead.
+     * @return wrappedUnderlying The underlying amount wrapped.
+     * @return wrappedAmount The resulting encrypted balance, persisted to this adapter.
+     */
     function _wrapIntoEscrow(address depositor, uint256 amount) internal returns (uint256 wrappedUnderlying, euint64 wrappedAmount) {
         if (amount == 0) revert ZeroAmount();
 
@@ -78,33 +93,13 @@ abstract contract StealthWrapAdapter is IStealthWrapAdapter, ZamaEthereumConfig,
         FHE.allowThis(wrappedAmount);
     }
 
-    /// @dev Makes an external `confidentialTransfer`, so callers MUST be `nonReentrant`.
+    /// @dev Transfer `amount` of escrowed confidential balance to `recipient` and return what the
+    ///      wrapper reports it moved. Call it only from a `nonReentrant` entrypoint.
     function _transferWrapped(address recipient, euint64 amount) internal returns (euint64 transferred) {
         FHE.allowThis(amount);
         FHE.allow(amount, address(CONFIDENTIAL_WRAPPER));
         transferred = CONFIDENTIAL_WRAPPER.confidentialTransfer(recipient, amount);
         FHE.allowThis(transferred);
-    }
-
-    /**
-     * @dev Reduce `xs` to a single encrypted sum with a pairwise binary-tree reduction.
-     *      This keeps FHE dependency depth at O(log N), unlike a serial accumulator.
-     */
-    function _sumTree(euint64[] memory xs) internal virtual returns (euint64) {
-        uint256 n = xs.length;
-        if (n == 0) return E_ZERO;
-
-        while (n > 1) {
-            uint256 half = (n + 1) >> 1;
-            for (uint256 i = 0; i < half; i++) {
-                uint256 l = i << 1;
-                uint256 r = l + 1;
-                xs[i] = r < n ? FHE.add(xs[l], xs[r]) : xs[l];
-            }
-            n = half;
-        }
-
-        return xs[0];
     }
 
     function finalizeWrap(uint256[] calldata ids, address recipient) external virtual;

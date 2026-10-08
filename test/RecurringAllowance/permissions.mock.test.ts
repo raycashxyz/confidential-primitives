@@ -45,6 +45,28 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(byId.limit).toBe(permission.limit);
   });
 
+  // An empty proof makes FHE.fromExternal return the handle verbatim, so a non-Uint64 handle would
+  // become Permission.limit and every later FHE.le against it reverts, inside _evaluatePermissions,
+  // which runs before tryTransferFrom's try/catch, so one such row kills a whole batch.
+  it("rejects an empty inputProof on creation (updatePermission's sentinel does not apply here)", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+
+    const { handle } = await S.encAmount(allowance.address, alice.account.address, 1000n);
+    await assertRevertsWith(
+      allowance.write.setPermission([
+        token.address,
+        bob.account.address,
+        handle,
+        "0x",
+        DAY,
+        0n,
+        0n
+      ], txOpts(alice.account)),
+      "MissingInputProof",
+    );
+  });
+
   it("both the user and the spender can decrypt limit and spent", async () => {
     const { H } = S.ctx();
     const { alice, bob } = H.wallets;
@@ -61,9 +83,9 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(await S.decryptAllowanceHandle(permission.spent, alice)).toBe(0n);
     expect(await S.decryptAllowanceHandle(permission.spent, bob)).toBe(0n);
 
-    // A SECOND permission under the same key: the contract skips re-granting the shared
+    // A SECOND permission under the same key. The contract skips re-granting the shared
     // encrypted-zero to save gas, so this checks the spender can still decrypt its
-    // freshly-created (still-zero) spent — i.e. the optimization didn't under-grant.
+    // freshly-created (still-zero) spent, i.e. the optimization didn't under-grant.
     await S.setPermission({
       user: alice,
       spender: bob.account.address,
@@ -168,10 +190,9 @@ describe("RecurringAllowance: permission lifecycle", () => {
 
     const beforeUpdate = await S.getPermission(alice.account.address, bob.account.address, 0n);
     const { handle, inputProof } = await S.encAmount(allowance.address, alice.account.address, 800n);
-    await S.sendOk(allowance.write.updatePermission([
+    const receipt = await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
-      0n,
       permissionId,
       handle,
       inputProof,
@@ -179,6 +200,14 @@ describe("RecurringAllowance: permission lifecycle", () => {
       0n, // startTime unchanged
       0n // endTime unchanged
     ], fheTxOpts(alice.account)));
+    const [updatedEvent] = parseEventLogs({
+      abi: allowance.abi,
+      logs: receipt.logs,
+      eventName: "PermissionUpdated"
+    });
+    if (!updatedEvent) throw new Error("no PermissionUpdated event");
+    expect(updatedEvent.args.permissionId).toBe(permissionId);
+    expect(updatedEvent.args.duration).toBe(beforeUpdate.duration);
 
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(await S.decryptAllowanceHandle(updated.limit, alice)).toBe(800n);
@@ -188,7 +217,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(updated.duration).toBe(beforeUpdate.duration);
   });
 
-  it("re-anchors the grid (and resets spent) when duration or startTime changes", async () => {
+  it("re-anchors the grid and carries spent over when duration or startTime changes", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob, carol } = H.wallets;
 
@@ -211,7 +240,6 @@ describe("RecurringAllowance: permission lifecycle", () => {
     await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
-      0n,
       permissionId,
       zeroHash,
       "0x", // limit unchanged
@@ -223,12 +251,21 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const blockTimestamp = await S.now();
     const updated = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(updated.duration).toBe(WEEK);
-    expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(0n); // reset
-    // startTime is unchanged; lastUpdated re-anchors to now (>= startTime) so `spent` is
-    // fresh for the current grid period and does not immediately re-reset on next spend.
+    expect(await S.decryptAllowanceHandle(updated.spent, alice)).toBe(200n); // carried over
+    // startTime is unchanged. lastUpdated re-anchors to now (>= startTime) so the carried
+    // `spent` counts toward the current grid period instead of resetting on the next spend.
     expect(updated.startTime).toBe(before.startTime);
     expect(updated.lastUpdated).toBe(blockTimestamp);
     expect(updated.lastUpdated).toBeGreaterThanOrEqual(updated.startTime);
+
+    // The carried value counts against the new grid: 300 more fits the 500 limit exactly.
+    await S.spend({
+      spender: bob,
+      from: alice.account.address,
+      to: carol.account.address,
+      amount: 300n
+    });
+    expect(await S.decryptSpent(alice, bob.account.address, 0n)).toBe(500n);
   });
 
   it("does NOT reset spent when duration/startTime are re-submitted unchanged", async () => {
@@ -252,11 +289,10 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const before = await S.getPermission(alice.account.address, bob.account.address, 0n);
 
     // A wallet echoes back the FULL current record (same duration and startTime, both
-    // nonzero). This must be a no-op for the grid — not a silent budget refresh.
+    // nonzero). This must be a no-op for the grid, not a silent budget refresh.
     await S.sendOk(allowance.write.updatePermission([
       token.address,
       bob.account.address,
-      0n,
       permissionId,
       zeroHash,
       "0x",
@@ -270,7 +306,7 @@ describe("RecurringAllowance: permission lifecycle", () => {
     expect(after.lastUpdated).toBe(before.lastUpdated); // grid untouched
   });
 
-  it("guards updates with (index, id) and validates the resulting window", async () => {
+  it("guards updates by id and validates the resulting window", async () => {
     const { H, token, allowance } = S.ctx();
     const { alice, bob } = H.wallets;
     const nowTs = await S.now();
@@ -281,28 +317,12 @@ describe("RecurringAllowance: permission lifecycle", () => {
       limit: 500n
     });
 
-    // wrong id
+    // unknown id
     await assertRevertsWith(
       allowance.write.updatePermission([
         token.address,
         bob.account.address,
-        0n,
         permissionId + 1n,
-        zeroHash,
-        "0x",
-        0n,
-        0n,
-        0n
-      ], txOpts(alice.account)),
-      "PermissionMismatch",
-    );
-    // out-of-range index
-    await assertRevertsWith(
-      allowance.write.updatePermission([
-        token.address,
-        bob.account.address,
-        5n,
-        permissionId,
         zeroHash,
         "0x",
         0n,
@@ -311,12 +331,11 @@ describe("RecurringAllowance: permission lifecycle", () => {
       ], txOpts(alice.account)),
       "PermissionNotFound",
     );
-    // resulting window invalid: startTime pushed past the (unchanged) endTime
+    // resulting window invalid, with startTime pushed past the (unchanged) endTime
     await assertRevertsWith(
       allowance.write.updatePermission([
         token.address,
         bob.account.address,
-        0n,
         permissionId,
         zeroHash,
         "0x",
@@ -331,7 +350,6 @@ describe("RecurringAllowance: permission lifecycle", () => {
       allowance.write.updatePermission([
         token.address,
         bob.account.address,
-        0n,
         permissionId,
         zeroHash,
         "0x",
@@ -340,6 +358,44 @@ describe("RecurringAllowance: permission lifecycle", () => {
         nowTs - 1n
       ], txOpts(alice.account)),
       "InvalidEndTime",
+    );
+
+    // A VALID replacement limit alongside an invalid window must still be rejected on the
+    // cleartext window, without the caller paying for proof verification or the ACL grants.
+    const { handle, inputProof } = await S.encAmount(allowance.address, alice.account.address, 900n);
+    await assertRevertsWith(
+      allowance.write.updatePermission([
+        token.address,
+        bob.account.address,
+        permissionId,
+        handle,
+        inputProof,
+        0n,
+        0n,
+        nowTs - 1n
+      ], txOpts(alice.account)),
+      "InvalidEndTime",
+    );
+    const untouched = await S.getPermission(alice.account.address, bob.account.address, 0n);
+    expect(await S.decryptAllowanceHandle(untouched.limit, alice)).toBe(500n);
+  });
+
+  it("reverts on an out-of-range index or an unknown id in the views", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob } = H.wallets;
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+
+    await assertRevertsWith(
+      allowance.read.getPermission([alice.account.address, token.address, bob.account.address, 1n]),
+      "PermissionIndexOutOfRange",
+    );
+    await assertRevertsWith(
+      allowance.read.getPermissionById([alice.account.address, token.address, bob.account.address, 999n]),
+      "PermissionNotFound",
     );
   });
 
@@ -358,12 +414,11 @@ describe("RecurringAllowance: permission lifecycle", () => {
       limit: 200n
     });
 
-    // fheTxOpts: swap-and-pop earns storage refunds, which tevm's gas estimate
-    // does not cover (the limit must cover the pre-refund peak).
+    // fheTxOpts because swap-and-pop earns storage refunds, which tevm's gas estimate
+    // does not cover. The limit must cover the pre-refund peak.
     const receipt = await S.sendOk(allowance.write.invalidatePermission([
       token.address,
       bob.account.address,
-      0n,
       idA
     ], fheTxOpts(alice.account)));
     const [event] = parseEventLogs({
@@ -377,16 +432,62 @@ describe("RecurringAllowance: permission lifecycle", () => {
     const remaining = await S.getPermission(alice.account.address, bob.account.address, 0n);
     expect(remaining.id).toBe(idB); // B swapped into slot 0
 
-    // a stale index+id pair now misses
+    // the id is gone, so a repeat misses regardless of where anything sits
     await assertRevertsWith(
       allowance.write.invalidatePermission([
         token.address,
         bob.account.address,
-        0n,
         idA
       ], txOpts(alice.account)),
-      "PermissionMismatch",
+      "PermissionNotFound",
     );
+  });
+
+  // Indices are not an address the owner controls, since any spender can move them by triggering the
+  // swap-and-pop prune inside _evaluatePermissions, which a zero-amount tryTransferFrom reaches
+  // while moving no funds. Under the old (index, id) addressing that front-run made the owner's
+  // revocation revert, letting a spender at spent == limit survive to the next period reset.
+  it("survives a spender front-running a revocation by reordering the array", async () => {
+    const { H, token, allowance } = S.ctx();
+    const { alice, bob, carol } = H.wallets;
+    const nowTs = await S.now();
+
+    await S.fundUser(alice, 10_000n);
+    // P0 expires shortly; P1 is the live one alice will want to revoke.
+    await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 100n,
+      endTime: nowTs + 100n
+    });
+    const { permissionId: liveId } = await S.setPermission({
+      user: alice,
+      spender: bob.account.address,
+      limit: 500n
+    });
+    expect((await S.getPermission(alice.account.address, bob.account.address, 1n)).id).toBe(liveId);
+
+    await H.warpTime(200n); // P0 is now expired and prunable
+
+    // The spender front-runs. No funds move, but the prune swaps P1 from index 1 to index 0.
+    const { handle, inputProof } = await S.encAmount(allowance.address, bob.account.address, 0n);
+    await S.sendOk(allowance.write.tryTransferFrom([[{
+      from: alice.account.address,
+      to: carol.account.address,
+      amount: handle,
+      inputProof,
+      token: token.address
+    }]], fheTxOpts(bob.account)));
+    expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(1n);
+    expect((await S.getPermission(alice.account.address, bob.account.address, 0n)).id).toBe(liveId);
+
+    // The revocation alice already signed still lands, because it names the id, which travelled with it.
+    await S.sendOk(allowance.write.invalidatePermission([
+      token.address,
+      bob.account.address,
+      liveId
+    ], fheTxOpts(alice.account)));
+    expect(await S.getPermissionCount(alice.account.address, bob.account.address)).toBe(0n);
   });
 
   it("lockdown wipes every permission for the pair", async () => {
